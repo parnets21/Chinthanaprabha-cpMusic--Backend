@@ -24,6 +24,7 @@ router.post("/generate-presigned-url/initiate", async (req, res) => {
     const key = `videos/${Date.now()}_${fileName.replace(/[^a-zA-Z0-9._-]/g, "_")}`
     const cmd = new CreateMultipartUploadCommand({ Bucket: BUCKET, Key: key, ContentType: contentType })
     const resp = await s3.send(cmd)
+    console.log("multipart initiate", { key, uploadId: resp.UploadId, contentType })
     return res.json({ uploadId: resp.UploadId, key })
   } catch (err) {
     console.error("initiate error", err)
@@ -40,6 +41,7 @@ router.post("/generate-presigned-url/part", async (req, res) => {
     }
     const cmd = new UploadPartCommand({ Bucket: BUCKET, Key: key, UploadId: uploadId, PartNumber: Number(partNumber) })
     const url = await getSignedUrl(s3, cmd, { expiresIn: 21600 })
+    console.log("multipart part presign", { key, uploadId, partNumber })
     return res.json({ url })
   } catch (err) {
     console.error("part presign error", err)
@@ -61,6 +63,7 @@ router.post("/generate-presigned-url/complete", async (req, res) => {
       MultipartUpload: { Parts: parts.map(p => ({ ETag: p.ETag, PartNumber: Number(p.partNumber) })).sort((a,b)=>a.PartNumber-b.PartNumber) },
     })
     const resp = await s3.send(cmd)
+    console.log("multipart complete", { key, uploadId, partsCount: parts.length })
     return res.json({ location: resp.Location || `https://${BUCKET}.s3.amazonaws.com/${key}`, key })
   } catch (err) {
     console.error("complete error", err)
