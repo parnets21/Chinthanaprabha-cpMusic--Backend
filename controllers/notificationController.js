@@ -6,7 +6,10 @@ const TeacherLogin = require("../models/TeacherLogin")
 const admin = require("firebase-admin")
 const Course = require("../models/CourseModel")
 
-// Initialize Firebase Admin SDK using environment variables
+// Feature flag to enable/disable FCM completely (set FCM_ENABLED=true to enable)
+const FCM_ENABLED = String(process.env.FCM_ENABLED || "false").toLowerCase() === "true"
+
+// Initialize Firebase Admin SDK using environment variables (only if enabled)
 const serviceAccount = {
   "type": "service_account",
   "project_id": process.env.FIREBASE_PROJECT_ID || "chinthanaprabha-d92ae",
@@ -22,7 +25,7 @@ const serviceAccount = {
 }
 
 // Check if Firebase app is already initialized to prevent re-initialization errors
-if (!admin.apps.length) {
+if (FCM_ENABLED && !admin.apps.length) {
   try {
     // Validate required environment variables
     if (!serviceAccount.private_key_id || !serviceAccount.private_key || !serviceAccount.client_email) {
@@ -33,20 +36,28 @@ if (!admin.apps.length) {
       throw new Error("Firebase credentials not properly configured")
     }
 
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
-    })
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+  })
     console.log("Firebase Admin SDK initialized successfully")
   } catch (error) {
     console.error("Failed to initialize Firebase Admin SDK:", error.message)
     console.error("Please check your Firebase environment variables")
   }
 } else {
-  console.log("Firebase Admin SDK already initialized")
+  if (!FCM_ENABLED) {
+    console.log("FCM is disabled (set FCM_ENABLED=true to enable push notifications)")
+  } else {
+    console.log("Firebase Admin SDK already initialized")
+  }
 }
 
 // Helper function to remove invalid FCM tokens
 const removeInvalidToken = async (token) => {
+  // If FCM disabled, skip sending and just create DB notifications
+  if (!FCM_ENABLED) {
+    console.log("FCM disabled - skipping push send for chat notification")
+  }
   try {
     // Remove from users
     await User.updateMany({ fcmToken: token }, { $unset: { fcmToken: 1 } })
@@ -118,7 +129,7 @@ exports.sendChatMessageNotification = async ({
     const courseName = course?.name || "a course"
 
     // --- Send Firebase Push Notification ONLY to the receiver ---
-    if (receiverToken) {
+    if (FCM_ENABLED && receiverToken) {
       console.log(`Sending push notification to ${receiverName} with token: ${receiverToken.substring(0, 20)}...`)
       
       const message = {
@@ -377,7 +388,11 @@ exports.createLiveClassNotification = async (liveClass) => {
     await Promise.all([...studentPromises, teacherPromise])
     console.log("Database notifications created for live class:", title)
 
-    await sendFirebaseNotifications(liveClass, notificationBatchId)
+    if (FCM_ENABLED) {
+      await sendFirebaseNotifications(liveClass, notificationBatchId)
+    } else {
+      console.log("FCM disabled - skipped sending live class push notifications")
+    }
   } catch (error) {
     console.error("Error creating live class notifications:", error.message, error.stack)
     throw error
