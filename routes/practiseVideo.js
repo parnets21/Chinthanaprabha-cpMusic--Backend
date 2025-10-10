@@ -19,7 +19,12 @@ const storage = multer.diskStorage({
   },
 });
 
-const upload = multer();
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: 500 * 1024 * 1024, // 500MB cap to avoid memory/CPU pressure on this route
+  },
+});
 
 // Upload practice video
 router.post('/upload', upload.single('video'), uploadPractiseVideo);

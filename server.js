@@ -24,7 +24,7 @@ const io = new Server(server, {
 })
 
 // Middleware to parse JSON
-app.use(express.json())
+app.use(express.json({ limit: "1mb" }))
 
 // Enable CORS for all routes
 app.use(cors())

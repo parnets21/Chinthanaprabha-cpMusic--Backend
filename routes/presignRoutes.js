@@ -39,7 +39,7 @@ router.post("/generate-presigned-url/part", async (req, res) => {
       return res.status(400).json({ message: "key, uploadId, and partNumber are required" })
     }
     const cmd = new UploadPartCommand({ Bucket: BUCKET, Key: key, UploadId: uploadId, PartNumber: Number(partNumber) })
-    const url = await getSignedUrl(s3, cmd, { expiresIn: 3600 })
+    const url = await getSignedUrl(s3, cmd, { expiresIn: 21600 })
     return res.json({ url })
   } catch (err) {
     console.error("part presign error", err)
