@@ -6,26 +6,43 @@ const TeacherLogin = require("../models/TeacherLogin")
 const admin = require("firebase-admin")
 const Course = require("../models/CourseModel")
 
-// Initialize Firebase Admin SDK (if not already initialized elsewhere)
+// Initialize Firebase Admin SDK using environment variables
 const serviceAccount = {
   "type": "service_account",
-  "project_id": "chinthanaprabha-d92ae",
-  "private_key_id": "9411fe6d6ed46ab9e0a09f5282f814505124e61a",
-  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCfEVla3d6uEmlV\nSLqV/EcckGWq4fxyOflhF3JOXNB6mmKWiucwmeGk0mTejI/szv1cS2fWO/tyNote\npispTv/QYGbDvHpkTsc/c5FWRezZ9AnYerqjGuoZVPc768yMIbattaRV5MrxB7al\nK88+/LU+aeZEfUUQR7shrnonCbvVgFqt9gDzoetYKC4M6/Xgm4cxqAaD1muLyjpQ\nuEaiAbnUOBYy0lDmzErQH2onQftGz+mvDZ5OFfAv3PzZd57gFcez+Xtu+I4PUc2g\nBJcno2rS8r9YdNiDAvdu2Q0LtirF6wR65/XR7kQVRawWHM6ZZKW/CYwrkrd2A9XJ\nKGg/EQnLAgMBAAECggEAFvZ6sew96rQmt5STDEw0edJQkvLNA4e3UUWrZIDv6bBi\n02eu80GrpM8TQltZUEQbUtkMiY1JgcCPrbS1ngt/piBchXIuhaTSYlMNI+lemqIo\n+l177Egvi5j2mJRe3XXlI2je6zVm+epKpXJ7GGqDwZmpD7G5KB4AIjRyrDMIBiHR\n8IOgBP1U6rbOlNK05TuJUyobQ6f+ULPxR6WDuyEoDHOgIi55N897Cahj4tEfxPXg\nLJC6kRzx2yAkknajs6VcIB5mrk3J3o4srZJH1LYvaynMaLzHxyYF0iSw50SPIWSF\n4/OTgENm1pTmXwomBWSDvZquf1gWaO4U1k+76C2c8QKBgQDMxuQulVLPeUXLu4pE\nqgnbJ/NNXo9Udt6Qpu1/QB8iUyIk0oAipjdyxSLcZ5b6SxkpU3tDsaIyDfVXQMTM\nrknwoVvCt9Tq5GU9hGGqmCBJdE7o5ybTo9AvrmehgislTfkoFUZ8D+XXcM8Pcav2\nAUrRkoA+cknvHCI7QnxfigddUQKBgQDG22xrK+uZAgceGUx3tceG2VgwKWWvgPyn\n/gFK2CGUhluEobOWJXeu2dl3UyS0G0dYnYjzsBHMm2iTyfCmmEjnVfFHydZ3EypH\nLEiF2FmT7YFYN1uB6uggIp31MjhsF0ADUmt57wQ5FiwJ6+TVH/6PDshbb/vf0LJ+\n7cmCQPV+WwKBgQC7pqcDaSLxrRggkkMqmQdfJUT36Wc+548cz1tj+MaPFc98Hsn8\n9oRpT+2aO/NGefscu7uBVQ5lABWLV3cAedaYA8WqsfsTJSkBLoaxZaZwqXyGQQx7\ndOoaR5//iOEw1js0WAq3NXpR6rZUWL5UOOrvEWkj0GegDg/wbgS7KCmHgQKBgF6M\nRWhPYZ1GUYwGC01/qHZ9MGj1xdtEQNy+8G5dhNnRaAIPwAtLlTQVcEhDx9e6gJmp\njUwQEuZtnbNm+Hy9OyyCuE2hsc671gYxD+pTi4PCERWYfHGw9t0QmHnUfu8lvtHV\nhjRbaG6cFCRDfHG43Je4N5sCC4fG+pdPB9heelqxAoGAAVVzDE6uICv+R0lmjwjY\nJ8fwGJyYHMBCL1aByZoh2X9PbJ+Fs2Z2iCfowZEzLm7DAOMUDVgU0u6zLqLtJejF\nS8+d2ox5pTfs8tVEeq/mJwdpIHxDpP+jUCu94iXYHoZBeUpwAh61qHGDoW/q1Ev4\nEegNtIYCBn0GJ2mDcOUOyVU=\n-----END PRIVATE KEY-----\n",
-  "client_email": "firebase-adminsdk-fbsvc@chinthanaprabha-d92ae.iam.gserviceaccount.com",
-  "client_id": "103090056148907989405",
+  "project_id": process.env.FIREBASE_PROJECT_ID || "chinthanaprabha-d92ae",
+  "private_key_id": process.env.FIREBASE_PRIVATE_KEY_ID,
+  "private_key": process.env.FIREBASE_PRIVATE_KEY ? process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n') : null,
+  "client_email": process.env.FIREBASE_CLIENT_EMAIL,
+  "client_id": process.env.FIREBASE_CLIENT_ID,
   "auth_uri": "https://accounts.google.com/o/oauth2/auth",
   "token_uri": "https://oauth2.googleapis.com/token",
   "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-fbsvc%40chinthanaprabha-d92ae.iam.gserviceaccount.com",
+  "client_x509_cert_url": process.env.FIREBASE_CLIENT_X509_CERT_URL,
   "universe_domain": "googleapis.com"
 }
 
 // Check if Firebase app is already initialized to prevent re-initialization errors
 if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-  })
+  try {
+    // Validate required environment variables
+    if (!serviceAccount.private_key_id || !serviceAccount.private_key || !serviceAccount.client_email) {
+      console.error("Missing Firebase environment variables:")
+      console.error("- FIREBASE_PRIVATE_KEY_ID:", !!serviceAccount.private_key_id)
+      console.error("- FIREBASE_PRIVATE_KEY:", !!serviceAccount.private_key)
+      console.error("- FIREBASE_CLIENT_EMAIL:", !!serviceAccount.client_email)
+      throw new Error("Firebase credentials not properly configured")
+    }
+
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+    })
+    console.log("Firebase Admin SDK initialized successfully")
+  } catch (error) {
+    console.error("Failed to initialize Firebase Admin SDK:", error.message)
+    console.error("Please check your Firebase environment variables")
+  }
+} else {
+  console.log("Firebase Admin SDK already initialized")
 }
 
 // Helper function to remove invalid FCM tokens
@@ -371,6 +388,11 @@ const sendFirebaseNotifications = async (liveClass, notificationBatchId) => {
   try {
     const { users, title, startTime, teacher, _id: liveClassId } = liveClass
 
+    console.log(`=== SENDING LIVE CLASS NOTIFICATIONS ===`)
+    console.log(`Live Class: ${title}`)
+    console.log(`Users: ${users.length}`)
+    console.log(`Teacher: ${teacher}`)
+
     // Get ONLY active users with valid FCM tokens
     const userTokens = await User.find(
       { 
@@ -381,6 +403,8 @@ const sendFirebaseNotifications = async (liveClass, notificationBatchId) => {
       },
       { fcmToken: 1, _id: 0 }
     ).distinct("fcmToken")
+
+    console.log(`Found ${userTokens.length} user FCM tokens`)
 
     // Get teacher's FCM token
     const teacherData = await TeacherLogin.findOne(
@@ -394,10 +418,14 @@ const sendFirebaseNotifications = async (liveClass, notificationBatchId) => {
     )
     const teacherToken = teacherData?.fcmToken || null
 
+    console.log(`Teacher FCM token: ${teacherToken ? 'Present' : 'Missing'}`)
+
     const allTokens = [...new Set([...userTokens])]
     if (teacherToken) {
       allTokens.push(teacherToken)
     }
+
+    console.log(`Total tokens to send to: ${allTokens.length}`)
 
     if (allTokens.length === 0) {
       console.log("No valid FCM tokens found for live class notification")
@@ -435,13 +463,15 @@ const sendFirebaseNotifications = async (liveClass, notificationBatchId) => {
       const chunk = messages.slice(i, i + chunkSize)
 
       try {
+        console.log(`Sending notification chunk ${i / chunkSize + 1} with ${chunk.length} messages`)
         const response = await admin.messaging().sendEach(chunk)
         console.log(`Sent ${response.successCount} messages successfully in chunk ${i / chunkSize + 1}`)
+        console.log(`Failed ${response.failureCount} messages in chunk ${i / chunkSize + 1}`)
 
         if (response.failureCount > 0) {
           const removalPromises = response.responses.map((resp, idx) => {
             if (!resp.success) {
-              console.log(`Failed to send message to token ${chunk[idx].token}:`, resp.error)
+              console.log(`Failed to send message to token ${chunk[idx].token.substring(0, 20)}...:`, resp.error)
               if (
                 resp.error.code === "messaging/invalid-registration-token" ||
                 resp.error.code === "messaging/registration-token-not-registered"
@@ -455,6 +485,7 @@ const sendFirebaseNotifications = async (liveClass, notificationBatchId) => {
         }
       } catch (error) {
         console.error(`Error sending notification chunk ${i / chunkSize + 1}:`, error.message)
+        console.error(`Full error:`, error)
       }
     }
   } catch (error) {

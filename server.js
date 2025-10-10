@@ -30,6 +30,16 @@ app.use(express.json())
 app.use(cors())
 
 app.use(morgon("dev"))
+// Log AWS env presence at startup (no secrets)
+try {
+  const { AWS_REGION, AWS_S3_BUCKET_NAME, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY } = process.env
+  console.log("AWS env present:", {
+    AWS_REGION: !!AWS_REGION,
+    AWS_S3_BUCKET_NAME: !!AWS_S3_BUCKET_NAME,
+    AWS_ACCESS_KEY_ID: !!AWS_ACCESS_KEY_ID,
+    AWS_SECRET_ACCESS_KEY: !!AWS_SECRET_ACCESS_KEY,
+  })
+} catch (_) {}
 // Use Helmet for added security headers
 /* app.use(
   helmet({
@@ -78,6 +88,9 @@ const performerRoutes = require("./routes/performerRoutes")
 const OfferRoutes = require("./routes/OfferRoutes")
 const chatRoutes = require("./routes/ChatRoutes") // Your new chat routes
 const reportRoutes = require("./routes/reportRoutes")
+const uploadRoutes = require("./routes/uploadRoutes")
+const presignRoutes = require("./routes/presignRoutes")
+const streamRoutes = require("./routes/streamRoutes")
 
 // Use Routes
 app.use("/chinthanaprabha/discount", OfferRoutes)
@@ -97,6 +110,9 @@ app.use("/chinthanaprabha", notificationRoutes)
 app.use("/api/shop", shopRoutes)
 app.use("/api/contacts", contactRoutes)
 app.use("/chinthanaprabha", chatRoutes) // Add chat routes here
+app.use("/chinthanaprabha", uploadRoutes)
+app.use("/chinthanaprabha", presignRoutes)
+app.use("/chinthanaprabha", streamRoutes)
 
 //musci-store routes
 app.use("/api/banners", require("./routes/bannerRoutes"))
@@ -104,7 +120,7 @@ app.use("/api/category", CategoryRoutes)
 app.use("/api/subcategory", SubcategoryRoutes)
 app.use("/api/instrument", instrumentRoutes)
 app.use("/api/order", OrderRoutes)
-app.use("/chinthanaprabha/performers", performerRoutes)
+
 app.use('/chinthanaprabha/reports', reportRoutes)
 
 // Socket.IO connection handling
@@ -162,13 +178,16 @@ io.on("connection", (socket) => {
     }
   })
 
-  socket.on("disconnect", () => {
-    console.log("User disconnected:", socket.id)
+     socket.on("disconnect", () => {
+     console.log("User disconnected:", socket.id)
   })
 })
 
 // Serve static files from the "build" directory (assuming your frontend build)
 app.use(express.static(path.join(__dirname, "build")))
+
+// Serve uploaded files
+app.use("/uploads", express.static(path.join(__dirname, "uploads")))
 
 // Redirect all other requests to the index.html file for client-side routing
 app.get("*", (req, res) => {

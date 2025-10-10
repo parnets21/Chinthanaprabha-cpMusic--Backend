@@ -12,13 +12,23 @@ const { pipeline } = require("stream");
 const { promisify } = require("util");
 dotenv.config();
 
+// Helper to log presence of required AWS envs (no secrets)
+const logAwsEnv = () => {
+  const present = {
+    AWS_REGION: !!process.env.AWS_REGION,
+    AWS_S3_BUCKET_NAME: !!process.env.AWS_S3_BUCKET_NAME,
+    AWS_ACCESS_KEY_ID: !!process.env.AWS_ACCESS_KEY_ID,
+    AWS_SECRET_ACCESS_KEY: !!process.env.AWS_SECRET_ACCESS_KEY,
+  }
+  console.log("AWS env present:", present)
+}
+
 const s3Client = new S3Client({
   region: process.env.AWS_REGION,
   credentials: {
     accessKeyId: process.env.AWS_ACCESS_KEY_ID,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
   },
-
 });
 
 
@@ -87,7 +97,7 @@ const uploadFile = (file, bucketname) => {
     const command = new PutObjectCommand(params);
     s3Client.send(command, (err, data) => {
       if (err) {
-        reject("File not uploaded");
+        reject(`File not uploaded: ${err.message || err}`);
       } else {
         // console.log(data);
         let location = `https://${process.env.AWS_S3_BUCKET_NAME}.s3.amazonaws.com/${params.Key}`;
@@ -111,7 +121,7 @@ const uploadFile2 = (file, bucketname) => {
     const command = new PutObjectCommand(params);
     s3Client.send(command, (err, data) => {
       if (err) {
-        reject("File not uploaded");
+        reject(`File not uploaded: ${err.message || err}`);
       } else {
         // console.log(data);
         let location = `https://${process.env.AWS_S3_BUCKET_NAME}.s3.amazonaws.com/${params.Key}`;

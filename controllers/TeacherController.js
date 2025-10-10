@@ -15,7 +15,7 @@ const createTeacher = async (req, res) => {
             subject,
             name,
             subjectImage,
-            thumbnail,
+            ...(thumbnail ? { thumbnail } : {}),
             videoUrl,
         });
 

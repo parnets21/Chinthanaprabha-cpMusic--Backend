@@ -15,7 +15,7 @@ const TeacherSchema = new mongoose.Schema({
     },
     thumbnail: {
         type: String, // Path to the thumbnail image file for video
-        required: true,
+        required: false,
     },
     videoUrl: {
         type: String, // Path to the video file

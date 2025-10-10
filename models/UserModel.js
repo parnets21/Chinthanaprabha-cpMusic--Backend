@@ -33,6 +33,11 @@ const userSchema = new mongoose.Schema({
   },
 })
 
+// Useful indexes to speed up lookups
+userSchema.index({ mobile: 1 }, { unique: true })
+userSchema.index({ email: 1 }, { unique: true })
+userSchema.index({ referralCode: 1 }, { unique: true, sparse: true })
+
 // Hash the password before saving the user
 userSchema.pre("save", async function (next) {
   if (this.isModified("password")) {

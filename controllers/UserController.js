@@ -37,9 +37,9 @@ const generateReferralCode = async (name) => {
   return newReferralCode
 }
 
-// Generate a fixed dummy OTP for testing (instead of a random one)
+// Generate a random OTP
 function generateOTP() {
-  return "123456" // Fixed OTP for testing (you can use a random generator for real cases)
+  return Math.floor(100000 + Math.random() * 900000).toString() // Generate 6-digit random OTP
 }
 
 // Registration controller
