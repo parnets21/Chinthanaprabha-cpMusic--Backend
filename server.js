@@ -93,6 +93,7 @@ const reportRoutes = require("./routes/reportRoutes")
 const uploadRoutes = require("./routes/uploadRoutes")
 const presignRoutes = require("./routes/presignRoutes")
 const streamRoutes = require("./routes/streamRoutes")
+const musicQuoteRoutes = require("./routes/musicQuoteRoutes")
 
 // Use Routes
 app.use("/chinthanaprabha/discount", OfferRoutes)
@@ -115,6 +116,7 @@ app.use("/chinthanaprabha", chatRoutes) // Add chat routes here
 app.use("/chinthanaprabha", uploadRoutes)
 app.use("/chinthanaprabha", presignRoutes)
 app.use("/chinthanaprabha", streamRoutes)
+app.use("/api/musicQuote", musicQuoteRoutes)
 
 //musci-store routes
 app.use("/api/banners", require("./routes/bannerRoutes"))
@@ -122,6 +124,8 @@ app.use("/api/category", CategoryRoutes)
 app.use("/api/subcategory", SubcategoryRoutes)
 app.use("/api/instrument", instrumentRoutes)
 app.use("/api/order", OrderRoutes)
+app.use("/api/performance", require("./routes/performanceRoutes"))
+app.use("/api/audienceReview", require("./routes/audienceReviewRoutes"))
 
 app.use('/chinthanaprabha/reports', reportRoutes)
 

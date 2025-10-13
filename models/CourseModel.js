@@ -76,6 +76,9 @@ const courseSchema = new mongoose.Schema({
   image: { type: String, required: true }, // URL to the course image
   lessons: [{ type: mongoose.Schema.Types.ObjectId, ref: "Lesson" }], // Array of lesson references
   price: { type: Number, required: true },
+  videoUrl: { type: String, required: false }, // YouTube URL for course preview
+  duration: { type: String, required: false }, // Course duration
+  overview: { type: String, required: false }, // Course overview
 })
 
 module.exports = mongoose.model("Course", courseSchema)

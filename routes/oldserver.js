@@ -120,5 +120,5 @@ app.get('*', (req, res) => {
   return res.sendFile(path.join(__dirname, 'build', 'index.html'));
 });
 app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:5000`);
+  console.log(`Server running on https://cpsangeetha.com`);
 });

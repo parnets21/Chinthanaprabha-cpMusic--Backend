@@ -53,7 +53,7 @@ import {
   Image as ImageIcon,
 } from '@mui/icons-material';
 
-const API_BASE_URL = 'http://localhost:5000/api';
+const API_BASE_URL = 'https://cpsangeetha.com/api';
 
 const OrderManagement = () => {
   const [orders, setOrders] = useState([]);

@@ -242,6 +242,42 @@ const Course = require("../models/CourseModel")
 const Lesson = require("../models/LessonModel")
 const path = require("path")
 
+// YouTube URL validation function
+const validateYouTubeUrl = (url) => {
+  if (!url) return false;
+  
+  const youtubePatterns = [
+    /^https?:\/\/(www\.)?youtube\.com\/watch\?v=([a-zA-Z0-9_-]{11})/, // Standard YouTube URL
+    /^https?:\/\/(www\.)?youtu\.be\/([a-zA-Z0-9_-]{11})/, // Short YouTube URL
+    /^https?:\/\/(www\.)?youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/, // Embed URL
+    /^https?:\/\/(www\.)?youtube\.com\/v\/([a-zA-Z0-9_-]{11})/, // Old YouTube URL format
+  ];
+  
+  return youtubePatterns.some(pattern => pattern.test(url));
+};
+
+// Extract YouTube video ID from URL
+const extractYouTubeVideoId = (url) => {
+  const patterns = [
+    /[?&]v=([^&]+)/,
+    /youtu\.be\/([^?]+)/,
+    /embed\/([^?]+)/,
+    /v\/([^?]+)/
+  ];
+  
+  for (const pattern of patterns) {
+    const match = url.match(pattern);
+    if (match) return match[1];
+  }
+  return null;
+};
+
+// Generate YouTube embed URL
+const getYouTubeEmbedUrl = (url) => {
+  const videoId = extractYouTubeVideoId(url);
+  return videoId ? `https://www.youtube.com/embed/${videoId}` : null;
+};
+
 // Get all courses
 exports.getAllCourses = async (req, res) => {
   try {
@@ -267,14 +303,19 @@ exports.getCourseById = async (req, res) => {
   }
 }
 
-// Create a new course
+// Create a new course with YouTube URL support
 exports.createCourse = async (req, res) => {
   try {
-    const { name, description, price, instructor } = req.body
+    const { name, description, price, instructor, videoUrl, duration, overview } = req.body
 
     // Validate required fields
     if (!name || !description || !price || !instructor) {
       return res.status(400).json({ message: "All fields (name, description, price, instructor) are required" })
+    }
+
+    // Validate YouTube URL if provided
+    if (videoUrl && !validateYouTubeUrl(videoUrl)) {
+      return res.status(400).json({ message: "Invalid YouTube URL format" })
     }
 
     const imagePath = req.file ? await uploadFile2(req.file, "category") : null
@@ -288,6 +329,9 @@ exports.createCourse = async (req, res) => {
       price,
       instructor, // instructor is now an ID
       image: imagePath,
+      videoUrl: videoUrl || null, // Add YouTube URL for course preview
+      duration: duration || null,
+      overview: overview || null,
     })
 
     await course.save()
@@ -297,14 +341,19 @@ exports.createCourse = async (req, res) => {
   }
 }
 
-// Update a course
+// Update a course with YouTube URL support
 exports.updateCourse = async (req, res) => {
   try {
-    const { name, description, price, instructor } = req.body
+    const { name, description, price, instructor, videoUrl, duration, overview } = req.body
 
     // Validate required fields
     if (!name || !description || !price || !instructor) {
       return res.status(400).json({ message: "All fields (name, description, price, instructor) are required" })
+    }
+
+    // Validate YouTube URL if provided
+    if (videoUrl && !validateYouTubeUrl(videoUrl)) {
+      return res.status(400).json({ message: "Invalid YouTube URL format" })
     }
 
     const imagePath = req.file ? await uploadFile2(req.file, "category") : null
@@ -314,6 +363,9 @@ exports.updateCourse = async (req, res) => {
       price,
       instructor, // instructor is now an ID
       ...(imagePath && { image: imagePath }), // Update image only if a new one is provided
+      ...(videoUrl && { videoUrl }), // Update video URL if provided
+      ...(duration && { duration }),
+      ...(overview && { overview }),
     }
 
     const course = await Course.findByIdAndUpdate(req.params.id, updateData, { new: true })
@@ -347,7 +399,7 @@ exports.deleteCourse = async (req, res) => {
   }
 }
 
-// Add a lesson to a course
+// Add a lesson to a course - YouTube URLs DISABLED for lessons
 exports.addLesson = async (req, res) => {
   try {
     const { courseId } = req.params
@@ -362,6 +414,24 @@ exports.addLesson = async (req, res) => {
     const course = await Course.findById(courseId)
     if (!course) {
       return res.status(404).json({ message: "Course not found" })
+    }
+
+    // Ensure that at least one video file is uploaded (NO YouTube URLs for lessons)
+    const videoFiles = req.files // This should be an array from multer
+    if (!videoFiles || videoFiles.length === 0) {
+      return res.status(400).json({ message: "At least one video file is required for lessons" })
+    }
+
+    // Upload all video files to AWS and get their URLs
+    const videoUrls = []
+    for (const file of videoFiles) {
+      try {
+        const videoUrl = await uploadFile2(file, "lessons")
+        videoUrls.push(videoUrl)
+      } catch (uploadError) {
+        console.error("Error uploading video:", uploadError)
+        return res.status(500).json({ message: "Error uploading video files" })
+      }
     }
 
     // Handle thumbnail upload - FIXED for multer.fields()
@@ -379,29 +449,11 @@ exports.addLesson = async (req, res) => {
       }
     }
 
-    // Handle video files - FIXED for multer.fields()
-    const videoFiles = req.files && req.files.videoUrls ? req.files.videoUrls : []
-    if (!videoFiles || videoFiles.length === 0) {
-      return res.status(400).json({ message: "At least one video file is required" })
-    }
-
-    // Upload all video files to AWS and get their URLs
-    const videoUrls = []
-    for (const file of videoFiles) {
-      try {
-        const videoUrl = await uploadFile2(file, "lessons")
-        videoUrls.push(videoUrl)
-      } catch (uploadError) {
-        console.error("Error uploading video:", uploadError)
-        return res.status(500).json({ message: "Error uploading video files" })
-      }
-    }
-
     // Create the lesson
     const lesson = new Lesson({
       lessonNumber,
       lessonIntro,
-      videoUrls,
+      videoUrls, // Only uploaded video files, no YouTube URLs
       thumbnail: thumbnailUrl,
       course: courseId,
     })
@@ -418,24 +470,27 @@ exports.addLesson = async (req, res) => {
   }
 }
 
-// Update a lesson
+// Update a lesson - YouTube URLs DISABLED for lessons
 exports.updateLesson = async (req, res) => {
   try {
     const { lessonId } = req.params
-    const { lessonNumber, lessonIntro, videoUrls } = req.body
+    const { lessonNumber, lessonIntro } = req.body
 
     // Validate required fields
     if (!lessonNumber || !lessonIntro) {
       return res.status(400).json({ message: "All fields (lessonNumber, lessonIntro) are required" })
     }
 
-    // Parse videoUrls if it's a string (from FormData)
-    let parsedVideoUrls = videoUrls
-    if (typeof videoUrls === "string") {
-      try {
-        parsedVideoUrls = JSON.parse(videoUrls)
-      } catch (e) {
-        parsedVideoUrls = [videoUrls]
+    // Handle new video uploads if any (NO YouTube URLs for lessons)
+    let videoUrls = []
+    if (req.files && req.files.length > 0) {
+      for (const file of req.files) {
+        try {
+          const videoUrl = await uploadFile2(file, "lessons")
+          videoUrls.push(videoUrl)
+        } catch (uploadError) {
+          console.error("Error uploading new video:", uploadError)
+        }
       }
     }
 
@@ -452,23 +507,14 @@ exports.updateLesson = async (req, res) => {
       }
     }
 
-    // Handle new video uploads if any - FIXED for multer.fields()
-    const videoFiles = req.files && req.files.videoUrls ? req.files.videoUrls : []
-    if (videoFiles && videoFiles.length > 0) {
-      for (const file of videoFiles) {
-        try {
-          const videoUrl = await uploadFile2(file, "lessons")
-          parsedVideoUrls.push(videoUrl)
-        } catch (uploadError) {
-          console.error("Error uploading new video:", uploadError)
-        }
-      }
-    }
-
     const updateData = {
       lessonNumber,
       lessonIntro,
-      videoUrls: parsedVideoUrls,
+    }
+
+    // Only update videoUrls if new files were uploaded
+    if (videoUrls.length > 0) {
+      updateData.videoUrls = videoUrls
     }
 
     // Only update thumbnail if a new one was uploaded
