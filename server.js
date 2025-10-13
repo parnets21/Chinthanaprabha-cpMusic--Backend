@@ -101,6 +101,7 @@ app.use("/chinthanaprabha/user-auth", userRoutes)
 app.use("/chinthanaprabha/courses-lessons", CourseRoutes)
 app.use("/chinthanaprabha/happy", HappyLearnersRoutes)
 app.use("/chinthanaprabha/performer", PerformerOfTheWeekRoutes)
+app.use("/chinthanaprabha/performers", performerRoutes) // Add performerRoutes for top-performer endpoint
 app.use("/chinthanaprabha/practise", practiseVideo)
 app.use("/chinthanaprabha/payment", paymentRoutes)
 app.use("/chinthanaprabha/progress-user", progress)
