@@ -16,7 +16,7 @@ const upload = multer({
   storage: multer.memoryStorage(), 
   limits: { 
     fileSize: 50 * 1024 * 1024,
-    fieldSize: 10 * 1024 * 1024, // 10MB for form fields
+    fieldSize: 50 * 1024 * 1024, // Increased to match file size limit
     fieldNameSize: 100,
     files: 1
   },
@@ -80,6 +80,8 @@ router.post("/upload", (req, res, next) => {
   console.log("Upload endpoint hit - before multer middleware");
   console.log("Request headers:", req.headers);
   console.log("Request body keys:", Object.keys(req.body || {}));
+  console.log("Content-Type:", req.headers['content-type']);
+  console.log("Content-Length:", req.headers['content-length']);
   
   upload.single("chunk")(req, res, (err) => {
     if (err) {
