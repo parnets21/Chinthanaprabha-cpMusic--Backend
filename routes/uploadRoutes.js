@@ -6,8 +6,23 @@ const { uploadFile2 } = require("../middleware/aws")
 
 const router = express.Router()
 
-// Memory storage is fine for small chunks (e.g., 5-10MB)
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } })
+// Memory storage for chunks (up to 50MB per chunk)
+const upload = multer({ 
+  storage: multer.memoryStorage(), 
+  limits: { 
+    fileSize: 50 * 1024 * 1024,
+    fieldSize: 10 * 1024 * 1024 // 10MB for form fields
+  },
+  fileFilter: (req, file, cb) => {
+    console.log("Multer file filter:", {
+      fieldname: file.fieldname,
+      originalname: file.originalname,
+      mimetype: file.mimetype,
+      size: file.size
+    });
+    cb(null, true);
+  }
+})
 
 // Regular upload for video files (up to 10GB) - using disk storage for large files
 const regularUpload = multer({ 
@@ -35,9 +50,24 @@ const ensureDir = (dirPath) => {
 // Expects multipart/form-data with fields: fileId, chunkIndex, totalChunks, fileName, and file field name: "chunk"
 router.post("/upload", upload.single("chunk"), async (req, res) => {
   try {
+    console.log("Chunk upload request received:", {
+      fileId: req.body.fileId,
+      chunkIndex: req.body.chunkIndex,
+      totalChunks: req.body.totalChunks,
+      fileName: req.body.fileName,
+      hasFile: !!req.file,
+      fileSize: req.file?.size
+    });
+
     const { fileId, chunkIndex, totalChunks, fileName } = req.body
     if (!fileId || typeof chunkIndex === "undefined" || !totalChunks || !fileName) {
+      console.error("Missing required fields:", { fileId, chunkIndex, totalChunks, fileName });
       return res.status(400).json({ message: "Missing required fields" })
+    }
+
+    if (!req.file) {
+      console.error("No file received in chunk upload");
+      return res.status(400).json({ message: "No file received" })
     }
 
     const chunksRoot = path.join(__dirname, "..", "uploads", "chunks", fileId)
@@ -45,6 +75,7 @@ router.post("/upload", upload.single("chunk"), async (req, res) => {
 
     // Save chunk to disk
     const chunkPath = path.join(chunksRoot, `chunk_${chunkIndex}`)
+    console.log(`Saving chunk ${chunkIndex} to: ${chunkPath}`);
     await fs.promises.writeFile(chunkPath, req.file.buffer)
 
     const idx = Number(chunkIndex)
@@ -129,6 +160,11 @@ router.post("/upload", upload.single("chunk"), async (req, res) => {
     }
   } catch (err) {
     console.error("Chunk upload error:", err)
+    console.error("Error details:", {
+      message: err.message,
+      stack: err.stack,
+      code: err.code
+    });
     return res.status(500).json({ message: "Upload failed", error: err.message })
   }
 })
