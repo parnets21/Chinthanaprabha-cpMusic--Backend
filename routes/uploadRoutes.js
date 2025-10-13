@@ -12,8 +12,19 @@ router.get("/health", (req, res) => {
 });
 
 // Memory storage for chunks (up to 50MB per chunk)
+// Disk storage for chunks (up to 50MB per chunk) - better for large files
 const upload = multer({ 
-  storage: multer.memoryStorage(), 
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => {
+      const uploadDir = path.join(__dirname, "..", "uploads", "temp-chunks")
+      ensureDir(uploadDir)
+      cb(null, uploadDir)
+    },
+    filename: (req, file, cb) => {
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9)
+      cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname))
+    }
+  }), 
   limits: { 
     fileSize: 50 * 1024 * 1024,
     fieldSize: 50 * 1024 * 1024, // Increased to match file size limit
@@ -126,10 +137,12 @@ router.post("/upload", (req, res, next) => {
     ensureDir(chunksRoot)
     console.log(`Chunks directory created successfully`);
 
-    // Save chunk to disk
+    // Save chunk to disk (now using disk storage, so file is already saved)
     const chunkPath = path.join(chunksRoot, `chunk_${chunkIndex}`)
-    console.log(`Saving chunk ${chunkIndex} to: ${chunkPath}`);
-    await fs.promises.writeFile(chunkPath, req.file.buffer)
+    console.log(`Moving chunk ${chunkIndex} from: ${req.file.path} to: ${chunkPath}`);
+    
+    // Move the file from temp location to chunks directory
+    await fs.promises.rename(req.file.path, chunkPath)
 
     const idx = Number(chunkIndex)
     const total = Number(totalChunks)
@@ -216,8 +229,23 @@ router.post("/upload", (req, res, next) => {
     console.error("Error details:", {
       message: err.message,
       stack: err.stack,
-      code: err.code
+      code: err.code,
+      errno: err.errno,
+      syscall: err.syscall,
+      path: err.path
     });
+    
+    // Clean up any partial chunks on error
+    try {
+      const chunksRoot = path.join(__dirname, "..", "uploads", "chunks", req.body.fileId);
+      if (fs.existsSync(chunksRoot)) {
+        await fs.promises.rm(chunksRoot, { recursive: true, force: true });
+        console.log(`Cleaned up chunks directory: ${chunksRoot}`);
+      }
+    } catch (cleanupError) {
+      console.error("Error cleaning up chunks:", cleanupError);
+    }
+    
     return res.status(500).json({ message: "Upload failed", error: err.message })
   }
 })
