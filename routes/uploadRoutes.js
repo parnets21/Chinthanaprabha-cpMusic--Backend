@@ -9,8 +9,21 @@ const router = express.Router()
 // Memory storage is fine for small chunks (e.g., 5-10MB)
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } })
 
-// Regular upload for smaller files (up to 2GB)
-const regularUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 * 1024 } })
+// Regular upload for video files (up to 10GB) - using disk storage for large files
+const regularUpload = multer({ 
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => {
+      const uploadDir = path.join(__dirname, "..", "uploads", "temp")
+      ensureDir(uploadDir)
+      cb(null, uploadDir)
+    },
+    filename: (req, file, cb) => {
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9)
+      cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname))
+    }
+  }), 
+  limits: { fileSize: 10 * 1024 * 1024 * 1024 } 
+})
 
 const ensureDir = (dirPath) => {
   if (!fs.existsSync(dirPath)) {
@@ -98,8 +111,18 @@ router.post("/upload-video", regularUpload.single("video"), async (req, res) => 
       return res.status(400).json({ message: "File must be a video" })
     }
 
+    console.log(`Uploading video: ${req.file.originalname}, Size: ${req.file.size} bytes`)
+
     // Upload to AWS S3
     const videoUrl = await uploadFile2(req.file, "course-videos")
+    
+    // Clean up temporary file
+    try {
+      await fs.promises.unlink(req.file.path)
+      console.log(`Cleaned up temporary file: ${req.file.path}`)
+    } catch (cleanupError) {
+      console.error("Error cleaning up temporary file:", cleanupError)
+    }
     
     res.status(200).json({ 
       message: "Video uploaded successfully", 
@@ -107,6 +130,17 @@ router.post("/upload-video", regularUpload.single("video"), async (req, res) => 
     })
   } catch (error) {
     console.error("Video upload error:", error)
+    
+    // Clean up temporary file on error
+    if (req.file && req.file.path) {
+      try {
+        await fs.promises.unlink(req.file.path)
+        console.log(`Cleaned up temporary file after error: ${req.file.path}`)
+      } catch (cleanupError) {
+        console.error("Error cleaning up temporary file after error:", cleanupError)
+      }
+    }
+    
     res.status(500).json({ message: "Video upload failed", error: error.message })
   }
 })
