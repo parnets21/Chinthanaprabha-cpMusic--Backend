@@ -2,11 +2,15 @@ const express = require("express")
 const fs = require("fs")
 const path = require("path")
 const multer = require("multer")
+const { uploadFile2 } = require("../middleware/aws")
 
 const router = express.Router()
 
 // Memory storage is fine for small chunks (e.g., 5-10MB)
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } })
+
+// Regular upload for smaller files (up to 2GB)
+const regularUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 * 1024 } })
 
 const ensureDir = (dirPath) => {
   if (!fs.existsSync(dirPath)) {
@@ -79,6 +83,56 @@ router.post("/upload", upload.single("chunk"), async (req, res) => {
   } catch (err) {
     console.error("Chunk upload error:", err)
     return res.status(500).json({ message: "Upload failed", error: err.message })
+  }
+})
+
+// POST /upload-video - Direct video upload for course main videos
+router.post("/upload-video", regularUpload.single("video"), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: "No video file provided" })
+    }
+
+    // Validate file type
+    if (!req.file.mimetype.startsWith('video/')) {
+      return res.status(400).json({ message: "File must be a video" })
+    }
+
+    // Upload to AWS S3
+    const videoUrl = await uploadFile2(req.file, "course-videos")
+    
+    res.status(200).json({ 
+      message: "Video uploaded successfully", 
+      location: videoUrl 
+    })
+  } catch (error) {
+    console.error("Video upload error:", error)
+    res.status(500).json({ message: "Video upload failed", error: error.message })
+  }
+})
+
+// POST /upload-thumbnail - Upload course/lesson thumbnails
+router.post("/upload-thumbnail", regularUpload.single("thumbnail"), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: "No thumbnail file provided" })
+    }
+
+    // Validate file type
+    if (!req.file.mimetype.startsWith('image/')) {
+      return res.status(400).json({ message: "File must be an image" })
+    }
+
+    // Upload to AWS S3
+    const thumbnailUrl = await uploadFile2(req.file, "thumbnails")
+    
+    res.status(200).json({ 
+      message: "Thumbnail uploaded successfully", 
+      location: thumbnailUrl 
+    })
+  } catch (error) {
+    console.error("Thumbnail upload error:", error)
+    res.status(500).json({ message: "Thumbnail upload failed", error: error.message })
   }
 })
 
