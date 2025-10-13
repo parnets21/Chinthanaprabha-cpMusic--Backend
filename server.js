@@ -27,8 +27,8 @@ const io = new Server(server, {
 app.use(express.json({ limit: '10gb' }));
 app.use(express.urlencoded({ extended: true, limit: '10gb' }));
 
-// Set timeout for large file uploads (30 minutes)
-server.timeout = 30 * 60 * 1000; // 30 minutes
+// Set timeout for large file uploads (60 minutes)
+server.timeout = 60 * 60 * 1000; // 60 minutes
 
 
 // Enable CORS for all routes
