@@ -84,15 +84,49 @@ router.post("/upload", upload.single("chunk"), async (req, res) => {
       writeStream.on("error", reject)
     })
 
-    // Cleanup chunk directory
-    const files = await fs.promises.readdir(chunksRoot)
-    await Promise.all(files.map((f) => fs.promises.unlink(path.join(chunksRoot, f))))
-    await fs.promises.rmdir(chunksRoot)
-
-    // Return public URL (assuming /uploads is statically served)
-    // Prefer returning the file key so frontend can build S3 URL or serve via CDN later
-    const fileKey = `videos/${outName}`
-    return res.status(200).json({ received: true, isLastChunk: true, key: fileKey })
+    // Upload merged file to AWS S3
+    console.log(`Uploading merged file to S3: ${outName}`);
+    const fileForUpload = {
+      path: outPath,
+      originalname: fileName,
+      mimetype: 'video/mp4', // Default to mp4, could be detected from file
+      size: fs.statSync(outPath).size
+    };
+    
+    try {
+      const s3Url = await uploadFile2(fileForUpload, "course-videos");
+      console.log(`Successfully uploaded to S3: ${s3Url}`);
+      
+      // Cleanup local files
+      await fs.promises.unlink(outPath);
+      const files = await fs.promises.readdir(chunksRoot);
+      await Promise.all(files.map((f) => fs.promises.unlink(path.join(chunksRoot, f))));
+      await fs.promises.rmdir(chunksRoot);
+      
+      return res.status(200).json({ 
+        received: true, 
+        isLastChunk: true, 
+        location: s3Url,
+        message: "File uploaded successfully to S3"
+      });
+    } catch (s3Error) {
+      console.error("S3 upload failed:", s3Error);
+      
+      // Cleanup on S3 error
+      try {
+        await fs.promises.unlink(outPath);
+        const files = await fs.promises.readdir(chunksRoot);
+        await Promise.all(files.map((f) => fs.promises.unlink(path.join(chunksRoot, f))));
+        await fs.promises.rmdir(chunksRoot);
+      } catch (cleanupError) {
+        console.error("Cleanup error:", cleanupError);
+      }
+      
+      return res.status(500).json({ 
+        message: "S3 upload failed", 
+        error: s3Error.message 
+      });
+    }
   } catch (err) {
     console.error("Chunk upload error:", err)
     return res.status(500).json({ message: "Upload failed", error: err.message })
