@@ -6,12 +6,19 @@ const { uploadFile2 } = require("../middleware/aws")
 
 const router = express.Router()
 
+// Health check endpoint
+router.get("/health", (req, res) => {
+  res.json({ message: "Upload service is running", timestamp: new Date().toISOString() });
+});
+
 // Memory storage for chunks (up to 50MB per chunk)
 const upload = multer({ 
   storage: multer.memoryStorage(), 
   limits: { 
     fileSize: 50 * 1024 * 1024,
-    fieldSize: 10 * 1024 * 1024 // 10MB for form fields
+    fieldSize: 10 * 1024 * 1024, // 10MB for form fields
+    fieldNameSize: 100,
+    files: 1
   },
   fileFilter: (req, file, cb) => {
     console.log("Multer file filter:", {
@@ -23,6 +30,27 @@ const upload = multer({
     cb(null, true);
   }
 })
+
+// Test endpoint to verify multer is working
+router.post("/test-upload", (req, res, next) => {
+  console.log("Test endpoint hit - before multer");
+  upload.single("chunk")(req, res, (err) => {
+    if (err) {
+      console.error("Test multer error:", err);
+      return res.status(400).json({ message: "Test multer error", error: err.message });
+    }
+    console.log("Test upload received:", {
+      body: req.body,
+      file: req.file ? {
+        fieldname: req.file.fieldname,
+        originalname: req.file.originalname,
+        mimetype: req.file.mimetype,
+        size: req.file.size
+      } : null
+    });
+    res.json({ message: "Test upload successful", received: !!req.file });
+  });
+});
 
 // Regular upload for video files (up to 10GB) - using disk storage for large files
 const regularUpload = multer({ 
@@ -48,7 +76,15 @@ const ensureDir = (dirPath) => {
 
 // POST /upload - accepts a single chunk
 // Expects multipart/form-data with fields: fileId, chunkIndex, totalChunks, fileName, and file field name: "chunk"
-router.post("/upload", upload.single("chunk"), async (req, res) => {
+router.post("/upload", (req, res, next) => {
+  upload.single("chunk")(req, res, (err) => {
+    if (err) {
+      console.error("Multer error:", err);
+      return res.status(400).json({ message: "File upload error", error: err.message });
+    }
+    next();
+  });
+}, async (req, res) => {
   try {
     console.log("Chunk upload request received:", {
       fileId: req.body.fileId,
@@ -56,7 +92,9 @@ router.post("/upload", upload.single("chunk"), async (req, res) => {
       totalChunks: req.body.totalChunks,
       fileName: req.body.fileName,
       hasFile: !!req.file,
-      fileSize: req.file?.size
+      fileSize: req.file?.size,
+      bodyKeys: Object.keys(req.body),
+      fileKeys: req.file ? Object.keys(req.file) : null
     });
 
     const { fileId, chunkIndex, totalChunks, fileName } = req.body
@@ -71,7 +109,9 @@ router.post("/upload", upload.single("chunk"), async (req, res) => {
     }
 
     const chunksRoot = path.join(__dirname, "..", "uploads", "chunks", fileId)
+    console.log(`Creating chunks directory: ${chunksRoot}`);
     ensureDir(chunksRoot)
+    console.log(`Chunks directory created successfully`);
 
     // Save chunk to disk
     const chunkPath = path.join(chunksRoot, `chunk_${chunkIndex}`)
