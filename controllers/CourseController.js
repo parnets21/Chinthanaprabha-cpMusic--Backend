@@ -278,7 +278,7 @@ exports.createCourse = async (req, res) => {
     }
 
     // Handle course image upload
-    const imagePath = req.file ? await uploadFile2(req.file, "category") : null
+    const imagePath = req.files && req.files.image ? await uploadFile2(req.files.image[0], "category") : null
     if (!imagePath) {
       return res.status(400).json({ message: "Course image is required" })
     }
@@ -326,7 +326,7 @@ exports.updateCourse = async (req, res) => {
     }
 
     // Handle course image upload
-    const imagePath = req.file ? await uploadFile2(req.file, "category") : null
+    const imagePath = req.files && req.files.image ? await uploadFile2(req.files.image[0], "category") : null
 
     // Handle course video upload if provided
     let videoUrl = null
