@@ -26,8 +26,8 @@ const upload = multer({
     }
   }), 
   limits: { 
-    fileSize: 50 * 1024 * 1024,
-    fieldSize: 50 * 1024 * 1024, // Increased to match file size limit
+    fileSize: 100 * 1024 * 1024, // Increased to 100MB to ensure 50MB chunks work
+    fieldSize: 100 * 1024 * 1024, // Increased to match file size limit
     fieldNameSize: 100,
     files: 1
   },
