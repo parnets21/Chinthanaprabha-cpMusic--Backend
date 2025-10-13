@@ -77,11 +77,22 @@ const ensureDir = (dirPath) => {
 // POST /upload - accepts a single chunk
 // Expects multipart/form-data with fields: fileId, chunkIndex, totalChunks, fileName, and file field name: "chunk"
 router.post("/upload", (req, res, next) => {
+  console.log("Upload endpoint hit - before multer middleware");
+  console.log("Request headers:", req.headers);
+  console.log("Request body keys:", Object.keys(req.body || {}));
+  
   upload.single("chunk")(req, res, (err) => {
     if (err) {
       console.error("Multer error:", err);
+      console.error("Multer error details:", {
+        code: err.code,
+        field: err.field,
+        message: err.message,
+        stack: err.stack
+      });
       return res.status(400).json({ message: "File upload error", error: err.message });
     }
+    console.log("Multer middleware passed successfully");
     next();
   });
 }, async (req, res) => {
