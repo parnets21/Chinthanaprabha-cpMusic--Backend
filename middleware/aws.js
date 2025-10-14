@@ -808,6 +808,12 @@ const uploadDirectToS3 = async (fileBuffer, fileName, contentType, bucketname, p
     const location = `https://${process.env.AWS_S3_BUCKET_NAME}.s3.amazonaws.com/${key}`;
     console.log(`🎉 Direct S3 upload completed: ${location}`);
     
+    // Force garbage collection after completion to free memory
+    if (global.gc) {
+      console.log('🧹 Forcing garbage collection after upload completion');
+      global.gc();
+    }
+    
     return location;
     
   } catch (error) {

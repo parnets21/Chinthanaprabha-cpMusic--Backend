@@ -61,26 +61,35 @@ try {
   })
 } catch (_) {}
 
-// Memory monitoring for t2.micro instances
-const monitorMemory = () => {
+// Memory and CPU monitoring for t2.micro instances
+const monitorSystem = () => {
   const used = process.memoryUsage();
   const totalMB = Math.round(used.heapTotal / 1024 / 1024);
   const usedMB = Math.round(used.heapUsed / 1024 / 1024);
   const externalMB = Math.round(used.external / 1024 / 1024);
-  
+
   console.log(`📊 Memory: ${usedMB}MB/${totalMB}MB (External: ${externalMB}MB)`);
-  
+
   // Force garbage collection if memory usage is high
-  if (usedMB > 400) { // 400MB threshold for t2.micro
+  if (usedMB > 300) { // Lowered threshold for high CPU scenarios
     console.log("🧹 High memory usage detected, forcing garbage collection...");
+    if (global.gc) {
+      global.gc();
+    }
+  }
+  
+  // Check CPU usage and optimize if needed
+  const cpuUsage = process.cpuUsage();
+  if (cpuUsage.user > 1000000000) { // 1 second of CPU time
+    console.log("🔥 High CPU usage detected, optimizing...");
     if (global.gc) {
       global.gc();
     }
   }
 };
 
-// Monitor memory every 30 seconds
-setInterval(monitorMemory, 30000);
+// Monitor system every 15 seconds (more frequent for high load)
+setInterval(monitorSystem, 15000);
 // Use Helmet for added security headers
 /* app.use(
   helmet({
@@ -262,6 +271,35 @@ app.get("/api/heartbeat", (req, res) => {
 // Store active SSE connections for real-time progress updates
 const activeConnections = new Map();
 
+// Response queue for high CPU load scenarios
+const responseQueue = new Map();
+
+// Process response queue every 2 seconds
+setInterval(() => {
+  if (responseQueue.size > 0) {
+    console.log(`📤 Processing ${responseQueue.size} queued responses`);
+    for (const [uploadId, responseData] of responseQueue) {
+      const connection = activeConnections.get(uploadId);
+      if (connection) {
+        try {
+          connection.write(`data: ${JSON.stringify({
+            type: 'completed',
+            uploadId: uploadId,
+            videoUrl: responseData.videoUrl,
+            fileName: responseData.fileName,
+            timestamp: new Date().toISOString(),
+            queued: true
+          })}\n\n`);
+          responseQueue.delete(uploadId);
+        } catch (error) {
+          console.error(`Error processing queued response for ${uploadId}:`, error);
+          responseQueue.delete(uploadId);
+        }
+      }
+    }
+  }
+}, 2000);
+
 // Server-Sent Events endpoint for real-time upload progress
 app.get("/api/upload-progress/:uploadId", (req, res) => {
   const uploadId = req.params.uploadId;
@@ -324,7 +362,7 @@ const broadcastProgress = (uploadId, progress) => {
   }
 };
 
-// Function to broadcast completion
+// Function to broadcast completion with queue fallback
 const broadcastCompletion = (uploadId, videoUrl, fileName) => {
   const connection = activeConnections.get(uploadId);
   if (connection) {
@@ -344,8 +382,14 @@ const broadcastCompletion = (uploadId, videoUrl, fileName) => {
       }, 1000);
     } catch (error) {
       console.error(`Error broadcasting completion for ${uploadId}:`, error);
+      // Queue the response for retry
+      responseQueue.set(uploadId, { videoUrl, fileName });
       activeConnections.delete(uploadId);
     }
+  } else {
+    // No active connection, queue the response
+    console.log(`📋 Queuing response for ${uploadId} - no active connection`);
+    responseQueue.set(uploadId, { videoUrl, fileName });
   }
 };
 

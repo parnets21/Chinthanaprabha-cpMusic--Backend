@@ -340,19 +340,49 @@ router.post("/upload-video", regularUpload.single("video"), async (req, res) => 
     );
     console.log(`✅ Direct S3 upload completed for ${req.file.originalname}: ${videoUrl}`);
     
-    // Broadcast completion via SSE
+    // Broadcast completion via SSE (primary method)
     if (global.broadcastCompletion) {
       global.broadcastCompletion(uploadId, videoUrl, req.file.originalname);
     }
     
-    res.status(200).json({ 
+    // Force garbage collection to free memory under high CPU load
+    if (global.gc) {
+      console.log('🧹 Forcing garbage collection before response');
+      global.gc();
+    }
+    
+    // Create response with multiple delivery methods
+    const responseData = { 
       message: "Video uploaded successfully", 
       location: videoUrl,
       fileName: req.file.originalname,
       fileSize: req.file.size,
       uploadType: "direct",
-      uploadId: uploadId
-    })
+      uploadId: uploadId,
+      timestamp: new Date().toISOString()
+    };
+    
+    // Set response headers for better delivery under load
+    res.set({
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache',
+      'Connection': 'close',
+      'X-Upload-Status': 'completed'
+    });
+    
+    // Send response with timeout protection
+    const responseTimeout = setTimeout(() => {
+      if (!res.headersSent) {
+        console.log('⚠️ Response timeout, forcing response');
+        res.status(200).json(responseData);
+      }
+    }, 5000); // 5 second timeout
+    
+    // Send response immediately
+    res.status(200).json(responseData);
+    clearTimeout(responseTimeout);
+    
+    console.log(`📤 Response sent for upload ${uploadId}: ${videoUrl}`);
   } catch (error) {
     console.error("❌ Video upload error:", error)
     console.error("Error details:", {
@@ -436,19 +466,49 @@ router.post("/upload-video-direct", memoryUpload.single("video"), async (req, re
     );
     console.log(`✅ Direct S3 upload completed for ${req.file.originalname}: ${videoUrl}`);
     
-    // Broadcast completion via SSE
+    // Broadcast completion via SSE (primary method)
     if (global.broadcastCompletion) {
       global.broadcastCompletion(uploadId, videoUrl, req.file.originalname);
     }
     
-    res.status(200).json({ 
+    // Force garbage collection to free memory under high CPU load
+    if (global.gc) {
+      console.log('🧹 Forcing garbage collection before response');
+      global.gc();
+    }
+    
+    // Create response with multiple delivery methods
+    const responseData = { 
       message: "Video uploaded successfully", 
       location: videoUrl,
       fileName: req.file.originalname,
       fileSize: req.file.size,
       uploadType: "direct",
-      uploadId: uploadId
-    })
+      uploadId: uploadId,
+      timestamp: new Date().toISOString()
+    };
+    
+    // Set response headers for better delivery under load
+    res.set({
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache',
+      'Connection': 'close',
+      'X-Upload-Status': 'completed'
+    });
+    
+    // Send response with timeout protection
+    const responseTimeout = setTimeout(() => {
+      if (!res.headersSent) {
+        console.log('⚠️ Response timeout, forcing response');
+        res.status(200).json(responseData);
+      }
+    }, 5000); // 5 second timeout
+    
+    // Send response immediately
+    res.status(200).json(responseData);
+    clearTimeout(responseTimeout);
+    
+    console.log(`📤 Response sent for upload ${uploadId}: ${videoUrl}`);
   } catch (error) {
     console.error("❌ Direct video upload error:", error)
     console.error("Error details:", {
