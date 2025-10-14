@@ -684,13 +684,13 @@ const listMultipartParts = async (uploadSession) => {
   }
 };
 
-// Direct S3 upload without local storage (for frontend uploads)
+// Ultra-lightweight multipart upload for t2.micro
 const uploadDirectToS3 = async (fileBuffer, fileName, contentType, bucketname, progressCallback = null) => {
   const fileSize = fileBuffer.length;
-  const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks (AWS S3 minimum)
+  const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB chunks for t2.micro
   const key = `${bucketname}/${Date.now() + "_" + fileName}`;
   
-  console.log(`🚀 Starting direct S3 upload for ${fileName} (${fileSize} bytes)`);
+  console.log(`🚀 Starting upload: ${fileName} (${Math.round(fileSize / 1024 / 1024)}MB)`);
   
   let uploadId = null;
   
@@ -724,15 +724,14 @@ const uploadDirectToS3 = async (fileBuffer, fileName, contentType, bucketname, p
         continue;
       }
       
-      console.log(`📤 Uploading part ${partNumber}/${totalParts} (${start}-${end}) - ${Math.round((partNumber / totalParts) * 100)}%`);
-      
-      // Call progress callback
-      if (progressCallback) {
+      // Log progress every 10%
+      if (progressCallback && partNumber % Math.max(1, Math.floor(totalParts / 10)) === 0) {
+        const progress = Math.round((partNumber / totalParts) * 100);
         progressCallback({
           partNumber,
           totalParts,
-          percentage: Math.round((partNumber / totalParts) * 100),
-          uploadedBytes,
+          percentage: progress,
+          uploadedBytes: uploadedBytes,
           totalBytes: fileSize
         });
       }
@@ -740,10 +739,10 @@ const uploadDirectToS3 = async (fileBuffer, fileName, contentType, bucketname, p
       // Extract chunk from buffer
       const chunkBuffer = fileBuffer.slice(start, end);
       
-      // Upload part with retry logic
+      // Upload part with simple retry
       let partUploaded = false;
       let retryCount = 0;
-      const maxRetries = 3;
+      const maxRetries = 2;
       
       while (!partUploaded && retryCount < maxRetries) {
         try {
@@ -766,22 +765,18 @@ const uploadDirectToS3 = async (fileBuffer, fileName, contentType, bucketname, p
           uploadedBytes += partSize;
           partUploaded = true;
           
-          console.log(`✅ Completed part ${partNumber}/${totalParts} (${Math.round((partNumber / totalParts) * 100)}%)`);
-          
-          // No delays - upload as fast as possible
+          console.log(`✅ Part ${partNumber}/${totalParts} (${Math.round((partNumber / totalParts) * 100)}%)`);
           
         } catch (partError) {
           retryCount++;
-          console.error(`❌ Part ${partNumber} upload failed (attempt ${retryCount}/${maxRetries}):`, partError.message);
+          console.error(`❌ Part ${partNumber} failed (attempt ${retryCount}/${maxRetries}):`, partError.message);
           
           if (retryCount >= maxRetries) {
             throw new Error(`Failed to upload part ${partNumber} after ${maxRetries} attempts: ${partError.message}`);
           }
           
           // Wait before retry
-          const waitTime = Math.pow(2, retryCount) * 1000; // 2s, 4s, 8s
-          console.log(`⏳ Waiting ${waitTime}ms before retry...`);
-          await new Promise(resolve => setTimeout(resolve, waitTime));
+          await new Promise(resolve => setTimeout(resolve, 2000));
         }
       }
     }
@@ -800,18 +795,12 @@ const uploadDirectToS3 = async (fileBuffer, fileName, contentType, bucketname, p
     await s3Client.send(completeCommand);
     
     const location = `https://${process.env.AWS_S3_BUCKET_NAME}.s3.amazonaws.com/${key}`;
-    console.log(`🎉 Direct S3 upload completed: ${location}`);
-    
-    // Force garbage collection after completion to free memory
-    if (global.gc) {
-      console.log('🧹 Forcing garbage collection after upload completion');
-      global.gc();
-    }
+    console.log(`🎉 Upload completed: ${location}`);
     
     return location;
     
   } catch (error) {
-    console.error('❌ Direct S3 upload failed:', error);
+    console.error('❌ Upload failed:', error);
     
     // Abort multipart upload on error
     if (uploadId) {

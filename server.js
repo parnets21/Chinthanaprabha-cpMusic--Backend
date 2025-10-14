@@ -61,35 +61,26 @@ try {
   })
 } catch (_) {}
 
-// Memory and CPU monitoring for t2.micro instances
+// Lightweight system monitoring for t2.micro
 const monitorSystem = () => {
   const used = process.memoryUsage();
   const totalMB = Math.round(used.heapTotal / 1024 / 1024);
   const usedMB = Math.round(used.heapUsed / 1024 / 1024);
-  const externalMB = Math.round(used.external / 1024 / 1024);
 
-  console.log(`📊 Memory: ${usedMB}MB/${totalMB}MB (External: ${externalMB}MB)`);
-
-  // Force garbage collection if memory usage is high
-  if (usedMB > 300) { // Lowered threshold for high CPU scenarios
-    console.log("🧹 High memory usage detected, forcing garbage collection...");
+  // Only log if memory usage is high (over 80% of heap)
+  if (usedMB > totalMB * 0.8) {
+    console.log(`⚠️ High memory usage: ${usedMB}MB/${totalMB}MB`);
+    
+    // Force garbage collection if available
     if (global.gc) {
       global.gc();
-    }
-  }
-  
-  // Check CPU usage and optimize if needed
-  const cpuUsage = process.cpuUsage();
-  if (cpuUsage.user > 1000000000) { // 1 second of CPU time
-    console.log("🔥 High CPU usage detected, optimizing...");
-    if (global.gc) {
-      global.gc();
+      console.log('🧹 Forced garbage collection');
     }
   }
 };
 
-// Monitor system every 15 seconds (more frequent for high load)
-setInterval(monitorSystem, 15000);
+// Monitor system every 30 seconds (reduced frequency for t2.micro)
+setInterval(monitorSystem, 30000);
 // Use Helmet for added security headers
 /* app.use(
   helmet({
