@@ -276,6 +276,9 @@ router.post("/upload-video", regularUpload.single("video"), async (req, res) => 
 
     console.log(`Uploading video: ${req.file.originalname}, Size: ${req.file.size} bytes`)
 
+    // Set response timeout for large files
+    res.setTimeout(120 * 60 * 1000); // 120 minutes
+
     // Upload directly to AWS S3 using buffer
     const fileForUpload = {
       buffer: req.file.buffer,
@@ -284,7 +287,9 @@ router.post("/upload-video", regularUpload.single("video"), async (req, res) => 
       size: req.file.size
     };
     
+    console.log(`Starting S3 upload for ${req.file.originalname}...`);
     const videoUrl = await uploadFile2(fileForUpload, "course-videos")
+    console.log(`S3 upload completed for ${req.file.originalname}: ${videoUrl}`);
     
     res.status(200).json({ 
       message: "Video uploaded successfully", 
@@ -292,6 +297,30 @@ router.post("/upload-video", regularUpload.single("video"), async (req, res) => 
     })
   } catch (error) {
     console.error("Video upload error:", error)
+    console.error("Error details:", {
+      message: error.message,
+      code: error.code,
+      name: error.name,
+      stack: error.stack
+    });
+    
+    // Provide more specific error messages
+    if (error.code === 'ECONNRESET') {
+      return res.status(500).json({ message: "Connection lost during upload", error: "Please try again" })
+    } else if (error.code === 'ETIMEDOUT') {
+      return res.status(500).json({ message: "Upload timeout", error: "File too large or connection too slow" })
+    } else if (error.message?.includes('timeout')) {
+      return res.status(500).json({ message: "Upload timeout", error: "Please check your connection and try again" })
+    } else if (error.message?.includes('File not found')) {
+      return res.status(500).json({ message: "File processing error", error: "Temporary file could not be created" })
+    } else if (error.name === 'NoSuchBucket') {
+      return res.status(500).json({ message: "Storage error", error: "AWS S3 bucket not found" })
+    } else if (error.name === 'InvalidAccessKeyId') {
+      return res.status(500).json({ message: "AWS configuration error", error: "Invalid AWS credentials" })
+    } else if (error.name === 'SignatureDoesNotMatch') {
+      return res.status(500).json({ message: "AWS authentication error", error: "AWS credentials mismatch" })
+    }
+    
     res.status(500).json({ message: "Video upload failed", error: error.message })
   }
 })

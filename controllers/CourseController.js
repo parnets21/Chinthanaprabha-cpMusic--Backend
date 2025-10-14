@@ -549,21 +549,24 @@ exports.deleteLesson = async (req, res) => {
 
 exports.AddLeasionVidoe = async (req, res) => {
   try {
-    const { courseId,videoUrl,lessonNumber,lessonIntro } = req.body
+    const { courseId,videoUrl,lessonNumber,lessonIntro,name ,duration} = req.body
     const course = await Course.findById(courseId)
     if (!course) {
       return res.status(404).json({ message: "Course not found" })
     }
   
-    const lesson = new Lesson({
-      courseId,
-      videoUrl,
+    let lesson = new Lesson({
+      course:courseId,
+      videoUrls:videoUrl,
       lessonNumber,
       lessonIntro,
+      name,
+      duration
     })
 
-    await lesson.save()
-
+    lesson=  await lesson.save()
+    course.lessons.push(lesson._id)
+    await course.save()
     res.status(200).json(lesson)
 
   } catch (error) {

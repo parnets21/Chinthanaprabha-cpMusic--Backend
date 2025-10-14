@@ -226,28 +226,49 @@ const uploadFile2 = async (file, bucketname) => {
   
   // Use multipart upload for files larger than 100MB
   if (file.size > 100 * 1024 * 1024) {
+    console.log(`Large file detected (${file.size} bytes), using multipart upload`);
+    
     // Check if file is on disk (from multer disk storage)
     if (file.path && fs.existsSync(file.path)) {
+      console.log(`Using existing file path: ${file.path}`);
       return await uploadLargeFile(file, bucketname);
     } else {
       // Fallback: write buffer to temp file for multipart upload
-      const tempPath = path.join(__dirname, '..', 'uploads', 'temp', `temp_${Date.now()}_${file.originalname}`);
-      await fs.promises.writeFile(tempPath, file.buffer);
+      const tempDir = path.join(__dirname, '..', 'uploads', 'temp');
       
-      const tempFile = {
-        ...file,
-        path: tempPath
-      };
+      // Ensure temp directory exists
+      if (!fs.existsSync(tempDir)) {
+        console.log(`Creating temp directory: ${tempDir}`);
+        fs.mkdirSync(tempDir, { recursive: true });
+      }
+      
+      const tempPath = path.join(tempDir, `temp_${Date.now()}_${file.originalname}`);
+      console.log(`Writing buffer to temp file: ${tempPath}`);
       
       try {
+        await fs.promises.writeFile(tempPath, file.buffer);
+        console.log(`Temp file created successfully`);
+        
+        const tempFile = {
+          ...file,
+          path: tempPath
+        };
+        
         const result = await uploadLargeFile(tempFile, bucketname);
+        console.log(`Multipart upload completed, cleaning up temp file`);
+        
         // Clean up temp file
         await fs.promises.unlink(tempPath);
         return result;
       } catch (error) {
+        console.error(`Error during multipart upload:`, error);
+        
         // Clean up temp file on error
         try {
-          await fs.promises.unlink(tempPath);
+          if (fs.existsSync(tempPath)) {
+            await fs.promises.unlink(tempPath);
+            console.log(`Cleaned up temp file after error`);
+          }
         } catch (cleanupError) {
           console.error('Error cleaning up temp file:', cleanupError);
         }
