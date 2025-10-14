@@ -113,9 +113,9 @@ const uploadFile = (file, bucketname) => {
   });
 };
 
-// Multipart upload for large files (>100MB)
-const uploadLargeFile = async (file, bucketname) => {
-  const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB chunks
+// Enhanced multipart upload optimized for t2.micro instances
+const uploadLargeFile = async (file, bucketname, progressCallback = null) => {
+  const CHUNK_SIZE = 2 * 1024 * 1024; // Reduced to 2MB chunks for t2.micro memory constraints
   const filePath = file.path; // For disk storage files
   const fileSize = file.size;
   const key = `${bucketname}/${Date.now() + "_" + file.originalname}`;
@@ -128,8 +128,10 @@ const uploadLargeFile = async (file, bucketname) => {
     throw new Error(`File not found: ${filePath}`);
   }
   
+  let uploadId = null;
+  
   try {
-    // Create multipart upload
+    // Create multipart upload with retry logic
     const createParams = {
       Bucket: process.env.AWS_S3_BUCKET_NAME,
       Key: key,
@@ -137,101 +139,171 @@ const uploadLargeFile = async (file, bucketname) => {
     };
     
     const createCommand = new CreateMultipartUploadCommand(createParams);
-    const { UploadId } = await s3Client.send(createCommand);
+    const createResult = await s3Client.send(createCommand);
+    uploadId = createResult.UploadId;
     
-    console.log(`Created multipart upload: ${UploadId}`);
+    console.log(`Created multipart upload: ${uploadId}`);
     
-    // Upload parts
+    // Upload parts with enhanced error handling
     const parts = [];
     const totalParts = Math.ceil(fileSize / CHUNK_SIZE);
+    let uploadedBytes = 0;
     
     for (let partNumber = 1; partNumber <= totalParts; partNumber++) {
       const start = (partNumber - 1) * CHUNK_SIZE;
       const end = Math.min(start + CHUNK_SIZE, fileSize);
+      const partSize = end - start;
       
-      console.log(`Uploading part ${partNumber}/${totalParts} (${start}-${end})`);
+      console.log(`Uploading part ${partNumber}/${totalParts} (${start}-${end}) - ${Math.round((partNumber / totalParts) * 100)}%`);
       
-      // Use stream to read chunk from file to avoid memory issues
-      const readStream = fs.createReadStream(filePath, { start, end: end - 1 });
-      const chunks = [];
+      // Call progress callback if provided
+      if (progressCallback) {
+        progressCallback({
+          partNumber,
+          totalParts,
+          percentage: Math.round((partNumber / totalParts) * 100),
+          uploadedBytes,
+          totalBytes: fileSize
+        });
+      }
       
-      await new Promise((resolve, reject) => {
-        readStream.on('data', (chunk) => chunks.push(chunk));
-        readStream.on('end', resolve);
-        readStream.on('error', reject);
-      });
+      // Upload part with retry logic
+      let partUploaded = false;
+      let retryCount = 0;
+      const maxRetries = 3;
       
-      const chunkBuffer = Buffer.concat(chunks);
-      
-      const uploadPartParams = {
-        Bucket: process.env.AWS_S3_BUCKET_NAME,
-        Key: key,
-        PartNumber: partNumber,
-        UploadId: UploadId,
-        Body: chunkBuffer,
-      };
-      
-      const uploadPartCommand = new UploadPartCommand(uploadPartParams);
-      const { ETag } = await s3Client.send(uploadPartCommand);
-      
-      parts.push({
-        ETag,
-        PartNumber: partNumber,
-      });
-      
-      console.log(`Completed part ${partNumber}/${totalParts} (${Math.round((partNumber / totalParts) * 100)}%)`);
+      while (!partUploaded && retryCount < maxRetries) {
+        try {
+          // Use stream to read chunk from file to avoid memory issues
+          const readStream = fs.createReadStream(filePath, { start, end: end - 1 });
+          const chunks = [];
+          
+          await new Promise((resolve, reject) => {
+            readStream.on('data', (chunk) => chunks.push(chunk));
+            readStream.on('end', resolve);
+            readStream.on('error', reject);
+          });
+          
+          const chunkBuffer = Buffer.concat(chunks);
+          
+          const uploadPartParams = {
+            Bucket: process.env.AWS_S3_BUCKET_NAME,
+            Key: key,
+            PartNumber: partNumber,
+            UploadId: uploadId,
+            Body: chunkBuffer,
+          };
+          
+          const uploadPartCommand = new UploadPartCommand(uploadPartParams);
+          const { ETag } = await s3Client.send(uploadPartCommand);
+          
+          parts.push({
+            ETag,
+            PartNumber: partNumber,
+          });
+          
+          uploadedBytes += partSize;
+          partUploaded = true;
+          
+          console.log(`✅ Completed part ${partNumber}/${totalParts} (${Math.round((partNumber / totalParts) * 100)}%)`);
+          
+          // Add delay between chunks to prevent CPU throttling on t2.micro
+          if (partNumber < totalParts) {
+            await new Promise(resolve => setTimeout(resolve, 100)); // 100ms delay
+          }
+          
+        } catch (partError) {
+          retryCount++;
+          console.error(`❌ Part ${partNumber} upload failed (attempt ${retryCount}/${maxRetries}):`, partError.message);
+          
+          if (retryCount >= maxRetries) {
+            throw new Error(`Failed to upload part ${partNumber} after ${maxRetries} attempts: ${partError.message}`);
+          }
+          
+          // Wait before retry (exponential backoff)
+          const waitTime = Math.pow(2, retryCount) * 1000; // 2s, 4s, 8s
+          console.log(`⏳ Waiting ${waitTime}ms before retry...`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+        }
+      }
     }
     
-    // Complete multipart upload
-    const completeParams = {
-      Bucket: process.env.AWS_S3_BUCKET_NAME,
-      Key: key,
-      UploadId: UploadId,
-      MultipartUpload: {
-        Parts: parts,
-      },
-    };
+    // Complete multipart upload with retry logic
+    let completed = false;
+    let completeRetryCount = 0;
+    const maxCompleteRetries = 3;
     
-    const completeCommand = new CompleteMultipartUploadCommand(completeParams);
-    await s3Client.send(completeCommand);
+    while (!completed && completeRetryCount < maxCompleteRetries) {
+      try {
+        const completeParams = {
+          Bucket: process.env.AWS_S3_BUCKET_NAME,
+          Key: key,
+          UploadId: uploadId,
+          MultipartUpload: {
+            Parts: parts,
+          },
+        };
+        
+        const completeCommand = new CompleteMultipartUploadCommand(completeParams);
+        await s3Client.send(completeCommand);
+        
+        completed = true;
+        console.log(`✅ Multipart upload completed successfully`);
+        
+      } catch (completeError) {
+        completeRetryCount++;
+        console.error(`❌ Complete multipart upload failed (attempt ${completeRetryCount}/${maxCompleteRetries}):`, completeError.message);
+        
+        if (completeRetryCount >= maxCompleteRetries) {
+          throw new Error(`Failed to complete multipart upload after ${maxCompleteRetries} attempts: ${completeError.message}`);
+        }
+        
+        // Wait before retry
+        const waitTime = Math.pow(2, completeRetryCount) * 1000;
+        console.log(`⏳ Waiting ${waitTime}ms before retry...`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      }
+    }
     
     const location = `https://${process.env.AWS_S3_BUCKET_NAME}.s3.amazonaws.com/${key}`;
-    console.log(`Multipart upload completed: ${location}`);
+    console.log(`🎉 Multipart upload completed: ${location}`);
     
     return location;
     
   } catch (error) {
-    console.error('Multipart upload failed:', error);
+    console.error('❌ Multipart upload failed:', error);
     
     // Abort multipart upload on error
-    try {
-      const abortParams = {
-        Bucket: process.env.AWS_S3_BUCKET_NAME,
-        Key: key,
-        UploadId: UploadId,
-      };
-      const abortCommand = new AbortMultipartUploadCommand(abortParams);
-      await s3Client.send(abortCommand);
-      console.log('Aborted multipart upload');
-    } catch (abortError) {
-      console.error('Error aborting multipart upload:', abortError);
+    if (uploadId) {
+      try {
+        const abortParams = {
+          Bucket: process.env.AWS_S3_BUCKET_NAME,
+          Key: key,
+          UploadId: uploadId,
+        };
+        const abortCommand = new AbortMultipartUploadCommand(abortParams);
+        await s3Client.send(abortCommand);
+        console.log('🧹 Aborted multipart upload');
+      } catch (abortError) {
+        console.error('❌ Error aborting multipart upload:', abortError);
+      }
     }
     
     throw error;
   }
 };
 
-const uploadFile2 = async (file, bucketname) => {
+const uploadFile2 = async (file, bucketname, progressCallback = null) => {
   console.log(`Uploading file: ${file.originalname}, Size: ${file.size}, Path: ${file.path}, Buffer: ${!!file.buffer}`);
   
-  // Use multipart upload for files larger than 100MB
-  if (file.size > 100 * 1024 * 1024) {
+  // Use multipart upload for files larger than 10MB (optimized for t2.micro)
+  if (file.size > 10 * 1024 * 1024) {
     console.log(`Large file detected (${file.size} bytes), using multipart upload`);
     
     // Check if file is on disk (from multer disk storage)
     if (file.path && fs.existsSync(file.path)) {
       console.log(`Using existing file path: ${file.path}`);
-      return await uploadLargeFile(file, bucketname);
+      return await uploadLargeFile(file, bucketname, progressCallback);
     } else {
       // Fallback: write buffer to temp file for multipart upload
       const tempDir = path.join(__dirname, '..', 'uploads', 'temp');
@@ -254,7 +326,7 @@ const uploadFile2 = async (file, bucketname) => {
           path: tempPath
         };
         
-        const result = await uploadLargeFile(tempFile, bucketname);
+        const result = await uploadLargeFile(tempFile, bucketname, progressCallback);
         console.log(`Multipart upload completed, cleaning up temp file`);
         
         // Clean up temp file
@@ -277,7 +349,7 @@ const uploadFile2 = async (file, bucketname) => {
     }
   }
   
-  // Use regular upload for smaller files
+  // Use regular upload for smaller files with retry logic
   return new Promise((resolve, reject) => {
     const params = {
       Bucket: process.env.AWS_S3_BUCKET_NAME,
@@ -285,16 +357,32 @@ const uploadFile2 = async (file, bucketname) => {
       Body: file.buffer,
       ContentType: file.mimetype,
     };
-    const command = new PutObjectCommand(params);
-    s3Client.send(command, (err, data) => {
-      if (err) {
-        reject(`File not uploaded: ${err.message || err}`);
-      } else {
+    
+    const uploadWithRetry = async (retryCount = 0) => {
+      const maxRetries = 3;
+      
+      try {
+        const command = new PutObjectCommand(params);
+        const data = await s3Client.send(command);
+        
         let location = `https://${process.env.AWS_S3_BUCKET_NAME}.s3.amazonaws.com/${params.Key}`;
-        console.log(location);
+        console.log(`✅ File uploaded successfully: ${location}`);
         resolve(location);
+        
+      } catch (err) {
+        console.error(`❌ Upload attempt ${retryCount + 1} failed:`, err.message);
+        
+        if (retryCount < maxRetries) {
+          const waitTime = Math.pow(2, retryCount) * 1000; // 1s, 2s, 4s
+          console.log(`⏳ Retrying in ${waitTime}ms...`);
+          setTimeout(() => uploadWithRetry(retryCount + 1), waitTime);
+        } else {
+          reject(`File not uploaded after ${maxRetries} attempts: ${err.message || err}`);
+        }
       }
-    });
+    };
+    
+    uploadWithRetry();
   });
 };
 

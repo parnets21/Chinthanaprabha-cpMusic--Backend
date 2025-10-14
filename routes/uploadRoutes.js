@@ -55,10 +55,50 @@ router.post("/test-upload", (req, res, next) => {
   });
 });
 
-// Regular upload for video files (up to 10GB) - using memory storage for direct S3 upload
+// Enhanced upload configuration for large files
+const ensureUploadDir = (dirPath) => {
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true });
+  }
+};
+
+// Disk storage for large files (better for multipart uploads)
+const diskStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadDir = path.join(__dirname, '..', 'uploads', 'temp');
+    ensureUploadDir(uploadDir);
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+// Regular upload for video files (up to 10GB) - using disk storage for better reliability
 const regularUpload = multer({ 
-  storage: multer.memoryStorage(), // Use memory storage for direct S3 upload
-  limits: { fileSize: 10 * 1024 * 1024 * 1024 } 
+  storage: diskStorage, // Use disk storage for large files
+  limits: { 
+    fileSize: 10 * 1024 * 1024 * 1024, // 10GB
+    fieldSize: 10 * 1024 * 1024 * 1024,
+    fieldNameSize: 100,
+    files: 1
+  },
+  fileFilter: (req, file, cb) => {
+    console.log("Multer file filter:", {
+      fieldname: file.fieldname,
+      originalname: file.originalname,
+      mimetype: file.mimetype,
+      size: file.size
+    });
+    
+    // Validate file type
+    if (!file.mimetype.startsWith('video/')) {
+      return cb(new Error('File must be a video'), false);
+    }
+    
+    cb(null, true);
+  }
 })
 
 const ensureDir = (dirPath) => {
@@ -262,47 +302,70 @@ router.post("/upload", (req, res, next) => {
   }
 })
 
-// POST /upload-video - Direct video upload for course main videos
+// POST /upload-video - Enhanced video upload with progress tracking and better error handling
 router.post("/upload-video", regularUpload.single("video"), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ message: "No video file provided" })
     }
 
-    // Validate file type
-    if (!req.file.mimetype.startsWith('video/')) {
-      return res.status(400).json({ message: "File must be a video" })
-    }
-
-    console.log(`Uploading video: ${req.file.originalname}, Size: ${req.file.size} bytes`)
+    console.log(`📹 Starting video upload: ${req.file.originalname}, Size: ${req.file.size} bytes`)
+    console.log(`📁 File path: ${req.file.path}`)
 
     // Set response timeout for large files
     res.setTimeout(120 * 60 * 1000); // 120 minutes
 
-    // Upload directly to AWS S3 using buffer
+    // Progress tracking callback
+    const progressCallback = (progress) => {
+      console.log(`📊 Upload progress: ${progress.percentage}% (${progress.partNumber}/${progress.totalParts})`);
+    };
+
+    // Upload to AWS S3 using enhanced multipart upload
     const fileForUpload = {
-      buffer: req.file.buffer,
+      path: req.file.path, // Use disk path for multipart upload
       originalname: req.file.originalname,
       mimetype: req.file.mimetype,
       size: req.file.size
     };
     
-    console.log(`Starting S3 upload for ${req.file.originalname}...`);
-    const videoUrl = await uploadFile2(fileForUpload, "course-videos")
-    console.log(`S3 upload completed for ${req.file.originalname}: ${videoUrl}`);
+    console.log(`🚀 Starting S3 multipart upload for ${req.file.originalname}...`);
+    const videoUrl = await uploadFile2(fileForUpload, "course-videos", progressCallback)
+    console.log(`✅ S3 upload completed for ${req.file.originalname}: ${videoUrl}`);
+    
+    // Clean up temporary file
+    try {
+      if (fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+        console.log(`🧹 Cleaned up temporary file: ${req.file.path}`);
+      }
+    } catch (cleanupError) {
+      console.error('⚠️ Error cleaning up temporary file:', cleanupError);
+    }
     
     res.status(200).json({ 
       message: "Video uploaded successfully", 
-      location: videoUrl 
+      location: videoUrl,
+      fileName: req.file.originalname,
+      fileSize: req.file.size
     })
   } catch (error) {
-    console.error("Video upload error:", error)
+    console.error("❌ Video upload error:", error)
     console.error("Error details:", {
       message: error.message,
       code: error.code,
       name: error.name,
       stack: error.stack
     });
+    
+    // Clean up temporary file on error
+    try {
+      if (req.file && req.file.path && fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+        console.log(`🧹 Cleaned up temporary file after error: ${req.file.path}`);
+      }
+    } catch (cleanupError) {
+      console.error('⚠️ Error cleaning up temporary file after error:', cleanupError);
+    }
     
     // Provide more specific error messages
     if (error.code === 'ECONNRESET') {
@@ -319,6 +382,10 @@ router.post("/upload-video", regularUpload.single("video"), async (req, res) => 
       return res.status(500).json({ message: "AWS configuration error", error: "Invalid AWS credentials" })
     } else if (error.name === 'SignatureDoesNotMatch') {
       return res.status(500).json({ message: "AWS authentication error", error: "AWS credentials mismatch" })
+    } else if (error.message?.includes('Failed to upload part')) {
+      return res.status(500).json({ message: "Upload part failed", error: "Network issue during upload. Please try again." })
+    } else if (error.message?.includes('Failed to complete multipart upload')) {
+      return res.status(500).json({ message: "Upload completion failed", error: "Upload was interrupted. Please try again." })
     }
     
     res.status(500).json({ message: "Video upload failed", error: error.message })

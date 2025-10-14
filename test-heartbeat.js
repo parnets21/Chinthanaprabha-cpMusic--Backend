@@ -6,13 +6,13 @@ async function testHeartbeat() {
     console.log('Testing heartbeat endpoint...');
     
     // Test POST request
-    const postResponse = await axios.post('http://localhost:5000/api/heartbeat', {
+    const postResponse = await axios.post('https://cpsangeetha.com/api/heartbeat', {
       timestamp: Date.now()
     });
     console.log('POST heartbeat response:', postResponse.data);
     
     // Test GET request
-    const getResponse = await axios.get('http://localhost:5000/api/heartbeat');
+    const getResponse = await axios.get('https://cpsangeetha.com/api/heartbeat');
     console.log('GET heartbeat response:', getResponse.data);
     
     console.log('✅ Heartbeat endpoint is working correctly!');

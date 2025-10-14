@@ -32,6 +32,19 @@ server.timeout = 120 * 60 * 1000; // 120 minutes
 server.keepAliveTimeout = 120 * 60 * 1000; // 120 minutes
 server.headersTimeout = 120 * 60 * 1000; // 120 minutes
 
+// Additional configuration for large file uploads
+server.maxConnections = 1000; // Increase max connections
+server.maxHeadersCount = 2000; // Increase max headers
+
+// Increase request timeout for large uploads
+app.use((req, res, next) => {
+  if (req.url.includes('/upload-video') || req.url.includes('/upload')) {
+    req.setTimeout(120 * 60 * 1000); // 120 minutes for uploads
+    res.setTimeout(120 * 60 * 1000); // 120 minutes for uploads
+  }
+  next();
+});
+
 
 // Enable CORS for all routes
 app.use(cors())
@@ -47,6 +60,27 @@ try {
     AWS_SECRET_ACCESS_KEY: !!AWS_SECRET_ACCESS_KEY,
   })
 } catch (_) {}
+
+// Memory monitoring for t2.micro instances
+const monitorMemory = () => {
+  const used = process.memoryUsage();
+  const totalMB = Math.round(used.heapTotal / 1024 / 1024);
+  const usedMB = Math.round(used.heapUsed / 1024 / 1024);
+  const externalMB = Math.round(used.external / 1024 / 1024);
+  
+  console.log(`📊 Memory: ${usedMB}MB/${totalMB}MB (External: ${externalMB}MB)`);
+  
+  // Force garbage collection if memory usage is high
+  if (usedMB > 400) { // 400MB threshold for t2.micro
+    console.log("🧹 High memory usage detected, forcing garbage collection...");
+    if (global.gc) {
+      global.gc();
+    }
+  }
+};
+
+// Monitor memory every 30 seconds
+setInterval(monitorMemory, 30000);
 // Use Helmet for added security headers
 /* app.use(
   helmet({
