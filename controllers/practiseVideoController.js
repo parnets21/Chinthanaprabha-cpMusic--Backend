@@ -1,4 +1,4 @@
-const { uploadFile2 } = require("../middleware/aws")
+const { uploadFile2, uploadDirectToS3 } = require("../middleware/aws")
 const PractiseVideo = require("../models/PractiseVideo")
 const Lesson = require("../models/LessonModel")
 
@@ -15,7 +15,7 @@ exports.uploadPractiseVideo = async (req, res) => {
 
     if (existingVideo) {
       // Update the existing video
-      existingVideo.videoUrl = req.file ? await uploadFile2(req.file, "category") : null
+      existingVideo.videoUrl = req.file ? await uploadDirectToS3(req.file.buffer, req.file.originalname, req.file.mimetype, "category") : null
       existingVideo.status = "pending" // Reset status to pending
       existingVideo.rating = 0 // Reset rating to 0
       existingVideo.feedback = "" // Reset feedback
@@ -24,7 +24,7 @@ exports.uploadPractiseVideo = async (req, res) => {
     } else {
       // Create a new video entry
       const practiseVideo = new PractiseVideo({
-        videoUrl: req.file ? await uploadFile2(req.file, "category") : null,
+        videoUrl: req.file ? await uploadDirectToS3(req.file.buffer, req.file.originalname, req.file.mimetype, "category") : null,
         lessonId,
         userId,
         rating: 0, // Default rating is 0

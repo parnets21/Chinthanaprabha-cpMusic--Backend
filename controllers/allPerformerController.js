@@ -1,5 +1,5 @@
 // controllers/allPerformerController.js
-const { uploadFile2 } = require('../middleware/aws');
+const { uploadFile2, uploadDirectToS3 } = require('../middleware/aws');
 const AllPerformer = require('../models/AllPerformer');
 const PerformerOfTheWeek = require('../models/PerformerOfTheWeek');
 
@@ -7,7 +7,7 @@ const PerformerOfTheWeek = require('../models/PerformerOfTheWeek');
 exports.createAllPerformer = async (req, res) => {
     try {
         const { name, category } = req.body; // Get name and category from req.body
-        const videoUrl = req.file ? await uploadFile2(req.file, "category") : null; // Get video path from req.file
+        const videoUrl = req.file ? await uploadDirectToS3(req.file.buffer, req.file.originalname, req.file.mimetype, "category") : null; // Get video path from req.file
 
         // Validate required fields
         if (!videoUrl || !name || !category) {
@@ -62,7 +62,7 @@ exports.getAllPerformerById = async (req, res) => {
 exports.updateAllPerformer = async (req, res) => {
     try {
         const { name, category } = req.body; // Get name and category from req.body
-        const videoUrl =  req.file ? await uploadFile2(req.file, "category") : null; // Get video path from req.file
+        const videoUrl =  req.file ? await uploadDirectToS3(req.file.buffer, req.file.originalname, req.file.mimetype, "category") : null; // Get video path from req.file
 
         const updateData = {
             name,

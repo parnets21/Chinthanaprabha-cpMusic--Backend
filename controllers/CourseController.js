@@ -1,4 +1,4 @@
-/* const { uploadFile2 } = require("../middleware/aws")
+/* const { uploadFile2, uploadDirectToS3 } = require("../middleware/aws")
 
 const Course = require("../models/CourseModel")
 const Lesson = require("../models/LessonModel")
@@ -134,7 +134,7 @@ exports.addLesson = async (req, res) => {
     const videoUrls = []
     for (const file of videoFiles) {
       try {
-        const videoUrl = await uploadFile2(file, "lessons")
+        const videoUrl = await uploadDirectToS3(file.buffer, file.originalname, file.mimetype, "lessons")
         videoUrls.push(videoUrl)
       } catch (uploadError) {
         console.error("Error uploading video:", uploadError)
@@ -187,7 +187,7 @@ exports.updateLesson = async (req, res) => {
     if (req.files && req.files.length > 0) {
       for (const file of req.files) {
         try {
-          const videoUrl = await uploadFile2(file, "lessons")
+          const videoUrl = await uploadDirectToS3(file.buffer, file.originalname, file.mimetype, "lessons")
           parsedVideoUrls.push(videoUrl)
         } catch (uploadError) {
           console.error("Error uploading new video:", uploadError)
@@ -236,7 +236,7 @@ exports.deleteLesson = async (req, res) => {
  */
 
 
-const { uploadFile2 } = require("../middleware/aws")
+const { uploadFile2, uploadDirectToS3 } = require("../middleware/aws")
 
 const Course = require("../models/CourseModel")
 const Lesson = require("../models/LessonModel")
@@ -394,7 +394,7 @@ exports.addLesson = async (req, res) => {
     const videoFiles = req.files && req.files.video ? req.files.video : []
     for (const file of videoFiles) {
       try {
-        const videoUrl = await uploadFile2(file, "lessons")
+        const videoUrl = await uploadDirectToS3(file.buffer, file.originalname, file.mimetype, "lessons")
         finalVideoUrls.push(videoUrl)
       } catch (uploadError) {
         console.error("Error uploading video:", uploadError)
@@ -476,7 +476,7 @@ exports.updateLesson = async (req, res) => {
     if (req.files && req.files.video) {
       for (const file of req.files.video) {
         try {
-          const videoUrl = await uploadFile2(file, "lessons")
+          const videoUrl = await uploadDirectToS3(file.buffer, file.originalname, file.mimetype, "lessons")
           finalVideoUrls.push(videoUrl)
         } catch (uploadError) {
           console.error("Error uploading new video:", uploadError)
