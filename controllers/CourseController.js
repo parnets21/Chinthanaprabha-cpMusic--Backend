@@ -267,7 +267,7 @@ exports.getCourseById = async (req, res) => {
   }
 }
 
-// Create a new course with video file upload support
+// Create a new course
 exports.createCourse = async (req, res) => {
   try {
     const { name, description, price, instructor, duration, overview } = req.body
@@ -283,27 +283,12 @@ exports.createCourse = async (req, res) => {
       return res.status(400).json({ message: "Course image is required" })
     }
 
-    // Handle course video upload if provided
-    let videoUrl = null
-    if (req.files && req.files.video) {
-      const videoFile = req.files.video[0]
-      if (videoFile) {
-        try {
-          videoUrl = await uploadFile2(videoFile, "course-videos")
-        } catch (uploadError) {
-          console.error("Error uploading course video:", uploadError)
-          return res.status(500).json({ message: "Error uploading course video" })
-        }
-      }
-    }
-
     const course = new Course({
       name,
       description,
       price,
       instructor, // instructor is now an ID
       image: imagePath,
-      videoUrl: videoUrl, // Course video file URL
       duration: duration || null,
       overview: overview || null,
     })
@@ -315,7 +300,7 @@ exports.createCourse = async (req, res) => {
   }
 }
 
-// Update a course with video file upload support
+// Update a course
 exports.updateCourse = async (req, res) => {
   try {
     const { name, description, price, instructor, duration, overview } = req.body
@@ -328,27 +313,12 @@ exports.updateCourse = async (req, res) => {
     // Handle course image upload
     const imagePath = req.files && req.files.image ? await uploadFile2(req.files.image[0], "category") : null
 
-    // Handle course video upload if provided
-    let videoUrl = null
-    if (req.files && req.files.video) {
-      const videoFile = req.files.video[0]
-      if (videoFile) {
-        try {
-          videoUrl = await uploadFile2(videoFile, "course-videos")
-        } catch (uploadError) {
-          console.error("Error uploading course video:", uploadError)
-          return res.status(500).json({ message: "Error uploading course video" })
-        }
-      }
-    }
-
     const updateData = {
       name,
       description,
       price,
       instructor, // instructor is now an ID
       ...(imagePath && { image: imagePath }), // Update image only if a new one is provided
-      ...(videoUrl && { videoUrl }), // Update video URL if provided
       ...(duration && { duration }),
       ...(overview && { overview }),
     }
@@ -388,7 +358,7 @@ exports.deleteCourse = async (req, res) => {
 exports.addLesson = async (req, res) => {
   try {
     const { courseId } = req.params
-    const { lessonNumber, lessonIntro } = req.body
+    const { lessonNumber, lessonIntro, videoUrls } = req.body
 
     // Validate required fields
     if (!lessonNumber || !lessonIntro) {
@@ -401,22 +371,40 @@ exports.addLesson = async (req, res) => {
       return res.status(404).json({ message: "Course not found" })
     }
 
-    // Ensure that at least one video file is uploaded
-    const videoFiles = req.files && req.files.video ? req.files.video : []
-    if (!videoFiles || videoFiles.length === 0) {
-      return res.status(400).json({ message: "At least one video file is required for lessons" })
+    let finalVideoUrls = []
+
+    // Handle pre-uploaded video URLs
+    if (videoUrls) {
+      try {
+        const parsedVideoUrls = typeof videoUrls === 'string' ? JSON.parse(videoUrls) : videoUrls
+        if (Array.isArray(parsedVideoUrls)) {
+          finalVideoUrls = [...finalVideoUrls, ...parsedVideoUrls]
+        } else if (typeof parsedVideoUrls === 'string') {
+          finalVideoUrls.push(parsedVideoUrls)
+        }
+      } catch (e) {
+        // If parsing fails, treat as single URL
+        if (typeof videoUrls === 'string') {
+          finalVideoUrls.push(videoUrls)
+        }
+      }
     }
 
-    // Upload all video files to AWS and get their URLs
-    const videoUrls = []
+    // Handle new video file uploads
+    const videoFiles = req.files && req.files.video ? req.files.video : []
     for (const file of videoFiles) {
       try {
         const videoUrl = await uploadFile2(file, "lessons")
-        videoUrls.push(videoUrl)
+        finalVideoUrls.push(videoUrl)
       } catch (uploadError) {
         console.error("Error uploading video:", uploadError)
         return res.status(500).json({ message: "Error uploading video files" })
       }
+    }
+
+    // Ensure at least one video is provided
+    if (finalVideoUrls.length === 0) {
+      return res.status(400).json({ message: "At least one video file or URL is required for lessons" })
     }
 
     // Handle thumbnail upload
@@ -437,7 +425,7 @@ exports.addLesson = async (req, res) => {
     const lesson = new Lesson({
       lessonNumber,
       lessonIntro,
-      videoUrls, // Uploaded video file URLs
+      videoUrls: finalVideoUrls, // Uploaded video file URLs
       thumbnail: thumbnailUrl,
       course: courseId,
     })
@@ -458,20 +446,38 @@ exports.addLesson = async (req, res) => {
 exports.updateLesson = async (req, res) => {
   try {
     const { lessonId } = req.params
-    const { lessonNumber, lessonIntro } = req.body
+    const { lessonNumber, lessonIntro, videoUrls } = req.body
 
     // Validate required fields
     if (!lessonNumber || !lessonIntro) {
       return res.status(400).json({ message: "All fields (lessonNumber, lessonIntro) are required" })
     }
 
-    // Handle new video uploads if any
-    let videoUrls = []
+    let finalVideoUrls = []
+
+    // Handle pre-uploaded video URLs
+    if (videoUrls) {
+      try {
+        const parsedVideoUrls = typeof videoUrls === 'string' ? JSON.parse(videoUrls) : videoUrls
+        if (Array.isArray(parsedVideoUrls)) {
+          finalVideoUrls = [...finalVideoUrls, ...parsedVideoUrls]
+        } else if (typeof parsedVideoUrls === 'string') {
+          finalVideoUrls.push(parsedVideoUrls)
+        }
+      } catch (e) {
+        // If parsing fails, treat as single URL
+        if (typeof videoUrls === 'string') {
+          finalVideoUrls.push(videoUrls)
+        }
+      }
+    }
+
+    // Handle new video file uploads
     if (req.files && req.files.video) {
       for (const file of req.files.video) {
         try {
           const videoUrl = await uploadFile2(file, "lessons")
-          videoUrls.push(videoUrl)
+          finalVideoUrls.push(videoUrl)
         } catch (uploadError) {
           console.error("Error uploading new video:", uploadError)
         }
@@ -496,9 +502,9 @@ exports.updateLesson = async (req, res) => {
       lessonIntro,
     }
 
-    // Only update videoUrls if new files were uploaded
-    if (videoUrls.length > 0) {
-      updateData.videoUrls = videoUrls
+    // Update videoUrls if provided (either URLs or new files)
+    if (finalVideoUrls.length > 0) {
+      updateData.videoUrls = finalVideoUrls
     }
 
     // Only update thumbnail if a new one was uploaded
@@ -536,6 +542,30 @@ exports.deleteLesson = async (req, res) => {
     await Lesson.findByIdAndDelete(lessonId)
 
     res.status(200).json({ message: "Lesson deleted successfully" })
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message })
+  }
+}
+
+exports.AddLeasionVidoe = async (req, res) => {
+  try {
+    const { courseId,videoUrl,lessonNumber,lessonIntro } = req.body
+    const course = await Course.findById(courseId)
+    if (!course) {
+      return res.status(404).json({ message: "Course not found" })
+    }
+  
+    const lesson = new Lesson({
+      courseId,
+      videoUrl,
+      lessonNumber,
+      lessonIntro,
+    })
+
+    await lesson.save()
+
+    res.status(200).json(lesson)
+
   } catch (error) {
     res.status(500).json({ message: "Server error", error: error.message })
   }

@@ -2,32 +2,24 @@ const express = require("express")
 const fs = require("fs")
 const path = require("path")
 const multer = require("multer")
-const { uploadFile2 } = require("../middleware/aws")
+const { uploadFile2, uploadChunkToS3, completeMultipartUpload, abortMultipartUpload } = require("../middleware/aws")
 
 const router = express.Router()
+
+// Store multipart upload sessions in memory (in production, use Redis or database)
+const multipartSessions = new Map()
 
 // Health check endpoint
 router.get("/health", (req, res) => {
   res.json({ message: "Upload service is running", timestamp: new Date().toISOString() });
 });
 
-// Memory storage for chunks (up to 50MB per chunk)
-// Disk storage for chunks (up to 50MB per chunk) - better for large files
+// Memory storage for chunks - no local disk storage needed
 const upload = multer({ 
-  storage: multer.diskStorage({
-    destination: (req, file, cb) => {
-      const uploadDir = path.join(__dirname, "..", "uploads", "temp-chunks")
-      ensureDir(uploadDir)
-      cb(null, uploadDir)
-    },
-    filename: (req, file, cb) => {
-      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9)
-      cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname))
-    }
-  }), 
+  storage: multer.memoryStorage(), // Use memory storage for direct S3 upload
   limits: { 
-    fileSize: 100 * 1024 * 1024, // Increased to 100MB to ensure 50MB chunks work
-    fieldSize: 100 * 1024 * 1024, // Increased to match file size limit
+    fileSize: 100 * 1024 * 1024, // 100MB per chunk
+    fieldSize: 100 * 1024 * 1024,
     fieldNameSize: 100,
     files: 1
   },
@@ -63,19 +55,9 @@ router.post("/test-upload", (req, res, next) => {
   });
 });
 
-// Regular upload for video files (up to 10GB) - using disk storage for large files
+// Regular upload for video files (up to 10GB) - using memory storage for direct S3 upload
 const regularUpload = multer({ 
-  storage: multer.diskStorage({
-    destination: (req, file, cb) => {
-      const uploadDir = path.join(__dirname, "..", "uploads", "temp")
-      ensureDir(uploadDir)
-      cb(null, uploadDir)
-    },
-    filename: (req, file, cb) => {
-      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9)
-      cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname))
-    }
-  }), 
+  storage: multer.memoryStorage(), // Use memory storage for direct S3 upload
   limits: { fileSize: 10 * 1024 * 1024 * 1024 } 
 })
 
@@ -85,7 +67,7 @@ const ensureDir = (dirPath) => {
   }
 }
 
-// POST /upload - accepts a single chunk
+// POST /upload - accepts a single chunk and uploads directly to S3
 // Expects multipart/form-data with fields: fileId, chunkIndex, totalChunks, fileName, and file field name: "chunk"
 router.post("/upload", (req, res, next) => {
   console.log("Upload endpoint hit - before multer middleware");
@@ -121,7 +103,7 @@ router.post("/upload", (req, res, next) => {
       fileKeys: req.file ? Object.keys(req.file) : null
     });
 
-    const { fileId, chunkIndex, totalChunks, fileName } = req.body
+    const { fileId, chunkIndex, totalChunks, fileName, fileSize } = req.body
     if (!fileId || typeof chunkIndex === "undefined" || !totalChunks || !fileName) {
       console.error("Missing required fields:", { fileId, chunkIndex, totalChunks, fileName });
       return res.status(400).json({ message: "Missing required fields" })
@@ -132,98 +114,125 @@ router.post("/upload", (req, res, next) => {
       return res.status(400).json({ message: "No file received" })
     }
 
-    const chunksRoot = path.join(__dirname, "..", "uploads", "chunks", fileId)
-    console.log(`Creating chunks directory: ${chunksRoot}`);
-    ensureDir(chunksRoot)
-    console.log(`Chunks directory created successfully`);
-
-    // Save chunk to disk (now using disk storage, so file is already saved)
-    const chunkPath = path.join(chunksRoot, `chunk_${chunkIndex}`)
-    console.log(`Moving chunk ${chunkIndex} from: ${req.file.path} to: ${chunkPath}`);
-    
-    // Move the file from temp location to chunks directory
-    await fs.promises.rename(req.file.path, chunkPath)
-
     const idx = Number(chunkIndex)
     const total = Number(totalChunks)
+    const partNumber = idx + 1 // S3 part numbers start from 1
 
-    // If this is not the last chunk, acknowledge
-    if (idx < total - 1) {
-      return res.status(200).json({ received: true, isLastChunk: false })
-    }
-
-    // Last chunk received: attempt to merge
-    const videosRoot = path.join(__dirname, "..", "uploads", "videos")
-    ensureDir(videosRoot)
-
-    // Sanitize filename
-    const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_")
-    const outName = `${Date.now()}_${safeName}`
-    const outPath = path.join(videosRoot, outName)
-
-    const writeStream = fs.createWriteStream(outPath)
-
-    // Append chunks in order
-    for (let i = 0; i < total; i++) {
-      const partPath = path.join(chunksRoot, `chunk_${i}`)
-      // Defensive check
-      const exists = fs.existsSync(partPath)
-      if (!exists) {
-        writeStream.destroy()
-        return res.status(500).json({ message: `Missing chunk ${i}` })
+    // Initialize multipart upload session if this is the first chunk
+    if (idx === 0) {
+      console.log(`Initializing multipart upload for ${fileName}`);
+      
+      // Sanitize filename
+      const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_")
+      const s3Key = `${Date.now()}_${safeName}`
+      
+      try {
+        const uploadSession = await initializeMultipartUpload(s3Key, req.file.mimetype || 'video/mp4', "course-videos");
+        
+        // Store session in memory
+        multipartSessions.set(fileId, {
+          ...uploadSession,
+          fileName: fileName,
+          totalChunks: total,
+          uploadedParts: [],
+          createdAt: Date.now()
+        });
+        
+        console.log(`Multipart upload initialized: ${uploadSession.uploadId}`);
+      } catch (initError) {
+        console.error("Failed to initialize multipart upload:", initError);
+        return res.status(500).json({ message: "Failed to initialize upload", error: initError.message });
       }
-      const data = await fs.promises.readFile(partPath)
-      writeStream.write(data)
     }
 
-    await new Promise((resolve, reject) => {
-      writeStream.end(() => resolve())
-      writeStream.on("error", reject)
-    })
+    // Get the upload session
+    const uploadSession = multipartSessions.get(fileId);
+    if (!uploadSession) {
+      console.error(`Upload session not found for fileId: ${fileId}`);
+      return res.status(400).json({ message: "Upload session not found" });
+    }
 
-    // Upload merged file to AWS S3
-    console.log(`Uploading merged file to S3: ${outName}`);
-    const fileForUpload = {
-      path: outPath,
-      originalname: fileName,
-      mimetype: 'video/mp4', // Default to mp4, could be detected from file
-      size: fs.statSync(outPath).size
-    };
+    // Upload chunk directly to S3
+    console.log(`Uploading chunk ${partNumber}/${total} to S3`);
     
     try {
-      const s3Url = await uploadFile2(fileForUpload, "course-videos");
-      console.log(`Successfully uploaded to S3: ${s3Url}`);
+      const part = await uploadChunkToS3(uploadSession, partNumber, req.file.buffer);
       
-      // Cleanup local files
-      await fs.promises.unlink(outPath);
-      const files = await fs.promises.readdir(chunksRoot);
-      await Promise.all(files.map((f) => fs.promises.unlink(path.join(chunksRoot, f))));
-      await fs.promises.rmdir(chunksRoot);
+      // Store the uploaded part info
+      uploadSession.uploadedParts.push(part);
       
-      return res.status(200).json({ 
-        received: true, 
-        isLastChunk: true, 
-        location: s3Url,
-        message: "File uploaded successfully to S3"
-      });
-    } catch (s3Error) {
-      console.error("S3 upload failed:", s3Error);
+      console.log(`Successfully uploaded chunk ${partNumber}/${total}`);
       
-      // Cleanup on S3 error
+      // If this is not the last chunk, acknowledge
+      if (idx < total - 1) {
+        return res.status(200).json({ 
+          received: true, 
+          isLastChunk: false,
+          uploadedParts: uploadSession.uploadedParts.length,
+          totalParts: total
+        });
+      }
+
+      // Last chunk received: complete multipart upload
+      console.log(`Completing multipart upload for ${fileName}`);
+      
       try {
-        await fs.promises.unlink(outPath);
-        const files = await fs.promises.readdir(chunksRoot);
-        await Promise.all(files.map((f) => fs.promises.unlink(path.join(chunksRoot, f))));
-        await fs.promises.rmdir(chunksRoot);
-      } catch (cleanupError) {
-        console.error("Cleanup error:", cleanupError);
+        const s3Url = await completeMultipartUpload(uploadSession, uploadSession.uploadedParts);
+        
+        // Clean up session
+        multipartSessions.delete(fileId);
+        
+        console.log(`Successfully completed multipart upload: ${s3Url}`);
+        
+        return res.status(200).json({ 
+          received: true, 
+          isLastChunk: true, 
+          location: s3Url,
+          message: "File uploaded successfully to S3"
+        });
+        
+      } catch (completeError) {
+        console.error("Failed to complete multipart upload:", completeError);
+        
+        // Try to abort the multipart upload
+        try {
+          await abortMultipartUpload(uploadSession);
+          console.log("Aborted multipart upload due to completion failure");
+        } catch (abortError) {
+          console.error("Failed to abort multipart upload:", abortError);
+        }
+        
+        // Clean up session
+        multipartSessions.delete(fileId);
+        
+        return res.status(500).json({ 
+          message: "Failed to complete upload", 
+          error: completeError.message 
+        });
       }
       
+    } catch (uploadError) {
+      console.error(`Failed to upload chunk ${partNumber}:`, uploadError);
+      
+      // If this is a critical error and we have uploaded parts, try to abort
+      if (uploadSession.uploadedParts.length > 0) {
+        try {
+          await abortMultipartUpload(uploadSession);
+          console.log("Aborted multipart upload due to chunk upload failure");
+        } catch (abortError) {
+          console.error("Failed to abort multipart upload:", abortError);
+        }
+      }
+      
+      // Clean up session
+      multipartSessions.delete(fileId);
+      
       return res.status(500).json({ 
-        message: "S3 upload failed", 
-        error: s3Error.message 
+        message: "Chunk upload failed", 
+        error: uploadError.message 
       });
     }
+    
   } catch (err) {
     console.error("Chunk upload error:", err)
     console.error("Error details:", {
@@ -235,15 +244,18 @@ router.post("/upload", (req, res, next) => {
       path: err.path
     });
     
-    // Clean up any partial chunks on error
-    try {
-      const chunksRoot = path.join(__dirname, "..", "uploads", "chunks", req.body.fileId);
-      if (fs.existsSync(chunksRoot)) {
-        await fs.promises.rm(chunksRoot, { recursive: true, force: true });
-        console.log(`Cleaned up chunks directory: ${chunksRoot}`);
+    // Clean up session on error
+    if (req.body.fileId) {
+      const uploadSession = multipartSessions.get(req.body.fileId);
+      if (uploadSession) {
+        try {
+          await abortMultipartUpload(uploadSession);
+          console.log("Aborted multipart upload due to error");
+        } catch (abortError) {
+          console.error("Failed to abort multipart upload:", abortError);
+        }
+        multipartSessions.delete(req.body.fileId);
       }
-    } catch (cleanupError) {
-      console.error("Error cleaning up chunks:", cleanupError);
     }
     
     return res.status(500).json({ message: "Upload failed", error: err.message })
@@ -264,16 +276,15 @@ router.post("/upload-video", regularUpload.single("video"), async (req, res) => 
 
     console.log(`Uploading video: ${req.file.originalname}, Size: ${req.file.size} bytes`)
 
-    // Upload to AWS S3
-    const videoUrl = await uploadFile2(req.file, "course-videos")
+    // Upload directly to AWS S3 using buffer
+    const fileForUpload = {
+      buffer: req.file.buffer,
+      originalname: req.file.originalname,
+      mimetype: req.file.mimetype,
+      size: req.file.size
+    };
     
-    // Clean up temporary file
-    try {
-      await fs.promises.unlink(req.file.path)
-      console.log(`Cleaned up temporary file: ${req.file.path}`)
-    } catch (cleanupError) {
-      console.error("Error cleaning up temporary file:", cleanupError)
-    }
+    const videoUrl = await uploadFile2(fileForUpload, "course-videos")
     
     res.status(200).json({ 
       message: "Video uploaded successfully", 
@@ -281,17 +292,6 @@ router.post("/upload-video", regularUpload.single("video"), async (req, res) => 
     })
   } catch (error) {
     console.error("Video upload error:", error)
-    
-    // Clean up temporary file on error
-    if (req.file && req.file.path) {
-      try {
-        await fs.promises.unlink(req.file.path)
-        console.log(`Cleaned up temporary file after error: ${req.file.path}`)
-      } catch (cleanupError) {
-        console.error("Error cleaning up temporary file after error:", cleanupError)
-      }
-    }
-    
     res.status(500).json({ message: "Video upload failed", error: error.message })
   }
 })
@@ -308,8 +308,15 @@ router.post("/upload-thumbnail", regularUpload.single("thumbnail"), async (req, 
       return res.status(400).json({ message: "File must be an image" })
     }
 
-    // Upload to AWS S3
-    const thumbnailUrl = await uploadFile2(req.file, "thumbnails")
+    // Upload directly to AWS S3 using buffer
+    const fileForUpload = {
+      buffer: req.file.buffer,
+      originalname: req.file.originalname,
+      mimetype: req.file.mimetype,
+      size: req.file.size
+    };
+    
+    const thumbnailUrl = await uploadFile2(fileForUpload, "thumbnails")
     
     res.status(200).json({ 
       message: "Thumbnail uploaded successfully", 
@@ -320,6 +327,57 @@ router.post("/upload-thumbnail", regularUpload.single("thumbnail"), async (req, 
     res.status(500).json({ message: "Thumbnail upload failed", error: error.message })
   }
 })
+
+// Cleanup function to remove old multipart sessions (run every hour)
+setInterval(() => {
+  const now = Date.now();
+  const maxAge = 24 * 60 * 60 * 1000; // 24 hours
+  
+  for (const [fileId, session] of multipartSessions.entries()) {
+    if (now - session.createdAt > maxAge) {
+      console.log(`Cleaning up old multipart session: ${fileId}`);
+      multipartSessions.delete(fileId);
+    }
+  }
+}, 60 * 60 * 1000); // Run every hour
+
+// Endpoint to get upload status
+router.get("/upload-status/:fileId", (req, res) => {
+  const { fileId } = req.params;
+  const session = multipartSessions.get(fileId);
+  
+  if (!session) {
+    return res.status(404).json({ message: "Upload session not found" });
+  }
+  
+  res.json({
+    fileId,
+    fileName: session.fileName,
+    totalChunks: session.totalChunks,
+    uploadedParts: session.uploadedParts.length,
+    uploadId: session.uploadId,
+    createdAt: session.createdAt
+  });
+});
+
+// Endpoint to abort an upload
+router.post("/abort-upload/:fileId", async (req, res) => {
+  const { fileId } = req.params;
+  const session = multipartSessions.get(fileId);
+  
+  if (!session) {
+    return res.status(404).json({ message: "Upload session not found" });
+  }
+  
+  try {
+    await abortMultipartUpload(session);
+    multipartSessions.delete(fileId);
+    res.json({ message: "Upload aborted successfully" });
+  } catch (error) {
+    console.error("Error aborting upload:", error);
+    res.status(500).json({ message: "Failed to abort upload", error: error.message });
+  }
+});
 
 module.exports = router
 

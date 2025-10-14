@@ -8,6 +8,7 @@ const {
   UploadPartCommand,
   CompleteMultipartUploadCommand,
   AbortMultipartUploadCommand,
+  ListPartsCommand,
 } = require("@aws-sdk/client-s3");
 const dotenv = require("dotenv");
 const fs = require("fs");
@@ -150,18 +151,24 @@ const uploadLargeFile = async (file, bucketname) => {
       
       console.log(`Uploading part ${partNumber}/${totalParts} (${start}-${end})`);
       
-      // Read chunk from file
-      const chunk = await fs.promises.readFile(filePath, { 
-        start, 
-        end: end - 1 
+      // Use stream to read chunk from file to avoid memory issues
+      const readStream = fs.createReadStream(filePath, { start, end: end - 1 });
+      const chunks = [];
+      
+      await new Promise((resolve, reject) => {
+        readStream.on('data', (chunk) => chunks.push(chunk));
+        readStream.on('end', resolve);
+        readStream.on('error', reject);
       });
+      
+      const chunkBuffer = Buffer.concat(chunks);
       
       const uploadPartParams = {
         Bucket: process.env.AWS_S3_BUCKET_NAME,
         Key: key,
         PartNumber: partNumber,
         UploadId: UploadId,
-        Body: chunk,
+        Body: chunkBuffer,
       };
       
       const uploadPartCommand = new UploadPartCommand(uploadPartParams);
@@ -343,4 +350,137 @@ const multifileUpload = async (files, bucketname) => {
   );
 };
 
-module.exports= { uploadFile,uploadFile2, deleteFile, updateFile, multifileUpload,downloadAllImages };
+// Initialize multipart upload for chunked uploads
+const initializeMultipartUpload = async (key, contentType, bucketname) => {
+  try {
+    const params = {
+      Bucket: process.env.AWS_S3_BUCKET_NAME,
+      Key: `${bucketname}/${key}`,
+      ContentType: contentType,
+    };
+    
+    const command = new CreateMultipartUploadCommand(params);
+    const result = await s3Client.send(command);
+    
+    console.log(`Initialized multipart upload: ${result.UploadId}`);
+    return {
+      uploadId: result.UploadId,
+      key: params.Key,
+      bucket: params.Bucket
+    };
+  } catch (error) {
+    console.error('Error initializing multipart upload:', error);
+    throw error;
+  }
+};
+
+// Upload a single chunk to S3
+const uploadChunkToS3 = async (uploadSession, partNumber, chunkBuffer, retryCount = 0) => {
+  const maxRetries = 3;
+  
+  try {
+    const params = {
+      Bucket: uploadSession.bucket,
+      Key: uploadSession.key,
+      PartNumber: partNumber,
+      UploadId: uploadSession.uploadId,
+      Body: chunkBuffer,
+    };
+    
+    const command = new UploadPartCommand(params);
+    const result = await s3Client.send(command);
+    
+    console.log(`Uploaded part ${partNumber}, ETag: ${result.ETag}`);
+    return {
+      ETag: result.ETag,
+      PartNumber: partNumber,
+    };
+  } catch (error) {
+    console.error(`Error uploading part ${partNumber} (attempt ${retryCount + 1}):`, error);
+    
+    if (retryCount < maxRetries) {
+      console.log(`Retrying part ${partNumber} upload in ${(retryCount + 1) * 2} seconds...`);
+      await new Promise(resolve => setTimeout(resolve, (retryCount + 1) * 2000));
+      return uploadChunkToS3(uploadSession, partNumber, chunkBuffer, retryCount + 1);
+    }
+    
+    throw error;
+  }
+};
+
+// Complete multipart upload
+const completeMultipartUpload = async (uploadSession, parts) => {
+  try {
+    const params = {
+      Bucket: uploadSession.bucket,
+      Key: uploadSession.key,
+      UploadId: uploadSession.uploadId,
+      MultipartUpload: {
+        Parts: parts,
+      },
+    };
+    
+    const command = new CompleteMultipartUploadCommand(params);
+    const result = await s3Client.send(command);
+    
+    const location = `https://${uploadSession.bucket}.s3.amazonaws.com/${uploadSession.key}`;
+    console.log(`Multipart upload completed: ${location}`);
+    
+    return location;
+  } catch (error) {
+    console.error('Error completing multipart upload:', error);
+    throw error;
+  }
+};
+
+// Abort multipart upload
+const abortMultipartUpload = async (uploadSession) => {
+  try {
+    const params = {
+      Bucket: uploadSession.bucket,
+      Key: uploadSession.key,
+      UploadId: uploadSession.uploadId,
+    };
+    
+    const command = new AbortMultipartUploadCommand(params);
+    await s3Client.send(command);
+    
+    console.log(`Aborted multipart upload: ${uploadSession.uploadId}`);
+  } catch (error) {
+    console.error('Error aborting multipart upload:', error);
+    throw error;
+  }
+};
+
+// List parts of a multipart upload
+const listMultipartParts = async (uploadSession) => {
+  try {
+    const params = {
+      Bucket: uploadSession.bucket,
+      Key: uploadSession.key,
+      UploadId: uploadSession.uploadId,
+    };
+    
+    const command = new ListPartsCommand(params);
+    const result = await s3Client.send(command);
+    
+    return result.Parts || [];
+  } catch (error) {
+    console.error('Error listing multipart parts:', error);
+    throw error;
+  }
+};
+
+module.exports= { 
+  uploadFile, 
+  uploadFile2, 
+  deleteFile, 
+  updateFile, 
+  multifileUpload, 
+  downloadAllImages,
+  initializeMultipartUpload,
+  uploadChunkToS3,
+  completeMultipartUpload,
+  abortMultipartUpload,
+  listMultipartParts
+};

@@ -28,15 +28,14 @@ const multer = require("multer")
 const CourseController = require("../controllers/CourseController")
 const router = express.Router()
 
-// Initialize upload for course image, course video, lesson videos and thumbnails
+// Initialize upload for course image, lesson videos and thumbnails
 const upload = multer()
 
-// Course routes - Updated to handle course video uploads
+// Course routes
 router.post(
   "/courses",
   upload.fields([
-    { name: "image", maxCount: 1 },
-    { name: "video", maxCount: 1 }
+    { name: "image", maxCount: 1 }
   ]),
   CourseController.createCourse
 )
@@ -47,8 +46,7 @@ router.get("/courses/:id", CourseController.getCourseById)
 router.put(
   "/courses/:id",
   upload.fields([
-    { name: "image", maxCount: 1 },
-    { name: "video", maxCount: 1 }
+    { name: "image", maxCount: 1 }
   ]),
   CourseController.updateCourse
 )
@@ -75,5 +73,5 @@ router.put(
 )
 
 router.delete("/lessons/:lessonId", CourseController.deleteLesson)
-
+router.post("/add-lesson-vidoe", CourseController.AddLeasionVidoe)
 module.exports = router
