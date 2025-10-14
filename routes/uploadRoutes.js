@@ -338,51 +338,15 @@ router.post("/upload-video", regularUpload.single("video"), async (req, res) => 
       "course-videos", 
       progressCallback
     );
-    console.log(`✅ Direct S3 upload completed for ${req.file.originalname}: ${videoUrl}`);
+    console.log(`✅ Upload completed: ${videoUrl}`);
     
-    // Broadcast completion via SSE (primary method)
-    if (global.broadcastCompletion) {
-      global.broadcastCompletion(uploadId, videoUrl, req.file.originalname);
-    }
-    
-    // Force garbage collection to free memory under high CPU load
-    if (global.gc) {
-      console.log('🧹 Forcing garbage collection before response');
-      global.gc();
-    }
-    
-    // Create response with multiple delivery methods
-    const responseData = { 
+    // Simple, clean response
+    res.status(200).json({ 
       message: "Video uploaded successfully", 
       location: videoUrl,
       fileName: req.file.originalname,
-      fileSize: req.file.size,
-      uploadType: "direct",
-      uploadId: uploadId,
-      timestamp: new Date().toISOString()
-    };
-    
-    // Set response headers for better delivery under load
-    res.set({
-      'Content-Type': 'application/json',
-      'Cache-Control': 'no-cache',
-      'Connection': 'close',
-      'X-Upload-Status': 'completed'
+      fileSize: req.file.size
     });
-    
-    // Send response with timeout protection
-    const responseTimeout = setTimeout(() => {
-      if (!res.headersSent) {
-        console.log('⚠️ Response timeout, forcing response');
-        res.status(200).json(responseData);
-      }
-    }, 5000); // 5 second timeout
-    
-    // Send response immediately
-    res.status(200).json(responseData);
-    clearTimeout(responseTimeout);
-    
-    console.log(`📤 Response sent for upload ${uploadId}: ${videoUrl}`);
   } catch (error) {
     console.error("❌ Video upload error:", error)
     console.error("Error details:", {
@@ -439,19 +403,12 @@ router.post("/upload-video-direct", memoryUpload.single("video"), async (req, re
     // Set response timeout for large files
     res.setTimeout(120 * 60 * 1000); // 120 minutes
 
-    // Progress tracking callback with SSE broadcasting
+    // Simplified progress tracking - only log every 10%
+    let lastLoggedProgress = 0;
     const progressCallback = (progress) => {
-      console.log(`📊 Direct upload progress: ${progress.percentage}% (${progress.partNumber}/${progress.totalParts})`);
-      
-      // Broadcast progress via SSE
-      if (global.broadcastProgress) {
-        global.broadcastProgress(uploadId, {
-          percentage: progress.percentage,
-          partNumber: progress.partNumber,
-          totalParts: progress.totalParts,
-          uploadedBytes: progress.uploadedBytes,
-          totalBytes: progress.totalBytes
-        });
+      if (progress.percentage >= lastLoggedProgress + 10) {
+        console.log(`📊 Upload progress: ${progress.percentage}%`);
+        lastLoggedProgress = progress.percentage;
       }
     };
 
@@ -464,51 +421,15 @@ router.post("/upload-video-direct", memoryUpload.single("video"), async (req, re
       "course-videos", 
       progressCallback
     );
-    console.log(`✅ Direct S3 upload completed for ${req.file.originalname}: ${videoUrl}`);
+    console.log(`✅ Upload completed: ${videoUrl}`);
     
-    // Broadcast completion via SSE (primary method)
-    if (global.broadcastCompletion) {
-      global.broadcastCompletion(uploadId, videoUrl, req.file.originalname);
-    }
-    
-    // Force garbage collection to free memory under high CPU load
-    if (global.gc) {
-      console.log('🧹 Forcing garbage collection before response');
-      global.gc();
-    }
-    
-    // Create response with multiple delivery methods
-    const responseData = { 
+    // Simple, clean response
+    res.status(200).json({ 
       message: "Video uploaded successfully", 
       location: videoUrl,
       fileName: req.file.originalname,
-      fileSize: req.file.size,
-      uploadType: "direct",
-      uploadId: uploadId,
-      timestamp: new Date().toISOString()
-    };
-    
-    // Set response headers for better delivery under load
-    res.set({
-      'Content-Type': 'application/json',
-      'Cache-Control': 'no-cache',
-      'Connection': 'close',
-      'X-Upload-Status': 'completed'
+      fileSize: req.file.size
     });
-    
-    // Send response with timeout protection
-    const responseTimeout = setTimeout(() => {
-      if (!res.headersSent) {
-        console.log('⚠️ Response timeout, forcing response');
-        res.status(200).json(responseData);
-      }
-    }, 5000); // 5 second timeout
-    
-    // Send response immediately
-    res.status(200).json(responseData);
-    clearTimeout(responseTimeout);
-    
-    console.log(`📤 Response sent for upload ${uploadId}: ${videoUrl}`);
   } catch (error) {
     console.error("❌ Direct video upload error:", error)
     console.error("Error details:", {

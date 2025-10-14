@@ -292,10 +292,7 @@ const uploadLargeFile = async (file, bucketname, progressCallback = null) => {
             lastUpdated: new Date().toISOString()
           });
           
-          // Add longer delay between chunks to prevent CPU throttling on t2.micro
-          if (partNumber < totalParts) {
-            await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay
-          }
+          // No delays - upload as fast as possible
           
           // Force garbage collection every 10 chunks to free memory
           if (partNumber % 10 === 0 && global.gc) {
@@ -771,10 +768,7 @@ const uploadDirectToS3 = async (fileBuffer, fileName, contentType, bucketname, p
           
           console.log(`✅ Completed part ${partNumber}/${totalParts} (${Math.round((partNumber / totalParts) * 100)}%)`);
           
-          // Add delay between chunks for t2.micro
-          if (partNumber < totalParts) {
-            await new Promise(resolve => setTimeout(resolve, 200)); // 200ms delay
-          }
+          // No delays - upload as fast as possible
           
         } catch (partError) {
           retryCount++;
