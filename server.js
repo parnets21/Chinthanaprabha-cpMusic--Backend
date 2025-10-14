@@ -195,6 +195,36 @@ io.on("connection", (socket) => {
   })
 })
 
+// Heartbeat endpoint to keep connections alive during long uploads
+app.post("/api/heartbeat", (req, res) => {
+  console.log("Heartbeat endpoint hit:", {
+    method: req.method,
+    url: req.url,
+    timestamp: new Date().toISOString(),
+    userAgent: req.get('User-Agent'),
+    origin: req.get('Origin')
+  });
+  res.json({ 
+    status: "alive", 
+    timestamp: new Date().toISOString(),
+    message: "Connection heartbeat received"
+  });
+});
+
+// Also support GET for heartbeat (in case frontend uses GET)
+app.get("/api/heartbeat", (req, res) => {
+  console.log("Heartbeat GET endpoint hit:", {
+    method: req.method,
+    url: req.url,
+    timestamp: new Date().toISOString()
+  });
+  res.json({ 
+    status: "alive", 
+    timestamp: new Date().toISOString(),
+    message: "Connection heartbeat received (GET)"
+  });
+});
+
 // Serve static files from the "build" directory (assuming your frontend build)
 app.use(express.static(path.join(__dirname, "build")))
 
