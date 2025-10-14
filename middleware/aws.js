@@ -791,11 +791,27 @@ const uploadDirectToS3 = async (fileBuffer, fileName, contentType, bucketname, p
       },
     };
     
+    // Check if we have any parts to complete
+    if (parts.length === 0) {
+      throw new Error('No parts uploaded - cannot complete multipart upload');
+    }
+    
+    console.log(`🔄 Completing multipart upload with ${parts.length} parts...`);
+    console.log(`📋 Parts array:`, parts.map(p => ({ PartNumber: p.PartNumber, ETag: p.ETag })));
+    
     const completeCommand = new CompleteMultipartUploadCommand(completeParams);
-    await s3Client.send(completeCommand);
+    
+    // Add timeout to prevent hanging
+    const completePromise = s3Client.send(completeCommand);
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('S3 complete operation timeout')), 30000); // 30 seconds
+    });
+    
+    const completeResult = await Promise.race([completePromise, timeoutPromise]);
     
     const location = `https://${process.env.AWS_S3_BUCKET_NAME}.s3.amazonaws.com/${key}`;
-    console.log(`🎉 Upload completed: ${location}`);
+    console.log(`🎉 Upload completed successfully: ${location}`);
+    console.log(`📋 Complete result:`, completeResult);
     
     return location;
     

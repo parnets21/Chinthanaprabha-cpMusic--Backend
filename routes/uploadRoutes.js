@@ -322,7 +322,7 @@ router.post("/upload-video", regularUpload.single("video"), async (req, res) => 
     console.log(`✅ File loaded in memory, size: ${req.file.size} bytes`);
 
     // Set response timeout for large files
-    res.setTimeout(120 * 60 * 1000); // 120 minutes
+    res.setTimeout(600 * 1000); // 10 minutes (reduced for testing)
 
     // Progress tracking callback
     const progressCallback = (progress) => {
@@ -388,6 +388,33 @@ router.post("/upload-video", regularUpload.single("video"), async (req, res) => 
   }
 })
 
+// Test endpoint to verify upload functionality
+router.post("/test-upload", memoryUpload.single("video"), async (req, res) => {
+  try {
+    console.log("🧪 Test upload endpoint hit");
+    
+    if (!req.file) {
+      return res.status(400).json({ message: "No video file provided" });
+    }
+    
+    console.log(`📁 Test file: ${req.file.originalname}, Size: ${req.file.size} bytes`);
+    
+    // Just return a mock URL for testing
+    const mockUrl = `https://test-bucket.s3.amazonaws.com/test-${Date.now()}.mp4`;
+    
+    res.status(200).json({ 
+      message: "Test upload successful", 
+      location: mockUrl,
+      fileName: req.file.originalname,
+      fileSize: req.file.size
+    });
+    
+  } catch (error) {
+    console.error("❌ Test upload error:", error);
+    res.status(500).json({ message: "Test upload failed", error: error.message });
+  }
+});
+
 // POST /upload-video-direct - Direct S3 upload without local storage
 router.post("/upload-video-direct", memoryUpload.single("video"), async (req, res) => {
   try {
@@ -401,7 +428,7 @@ router.post("/upload-video-direct", memoryUpload.single("video"), async (req, re
     console.log(`🚀 Starting direct S3 upload: ${req.file.originalname}, Size: ${req.file.size} bytes, UploadID: ${uploadId}`)
 
     // Set response timeout for large files
-    res.setTimeout(120 * 60 * 1000); // 120 minutes
+    res.setTimeout(600 * 1000); // 10 minutes (reduced for testing)
 
     // Simplified progress tracking - only log every 10%
     let lastLoggedProgress = 0;
@@ -414,22 +441,35 @@ router.post("/upload-video-direct", memoryUpload.single("video"), async (req, re
 
     // Upload directly to S3 using buffer (no local storage)
     console.log(`🎯 Starting direct S3 multipart upload for ${req.file.originalname}...`);
-    const videoUrl = await uploadDirectToS3(
-      req.file.buffer, 
-      req.file.originalname, 
-      req.file.mimetype, 
-      "course-videos", 
-      progressCallback
-    );
-    console.log(`✅ Upload completed: ${videoUrl}`);
     
-    // Simple, clean response
-    res.status(200).json({ 
-      message: "Video uploaded successfully", 
-      location: videoUrl,
-      fileName: req.file.originalname,
-      fileSize: req.file.size
-    });
+    try {
+      const videoUrl = await uploadDirectToS3(
+        req.file.buffer, 
+        req.file.originalname, 
+        req.file.mimetype, 
+        "course-videos", 
+        progressCallback
+      );
+      
+      console.log(`✅ Upload completed successfully: ${videoUrl}`);
+      console.log(`📤 Sending response to frontend...`);
+      
+      // Simple, clean response
+      const response = { 
+        message: "Video uploaded successfully", 
+        location: videoUrl,
+        fileName: req.file.originalname,
+        fileSize: req.file.size
+      };
+      
+      console.log(`📋 Response data:`, response);
+      res.status(200).json(response);
+      console.log(`✅ Response sent successfully`);
+      
+    } catch (uploadError) {
+      console.error(`❌ Upload failed in route:`, uploadError);
+      throw uploadError; // Re-throw to be caught by outer catch block
+    }
   } catch (error) {
     console.error("❌ Direct video upload error:", error)
     console.error("Error details:", {
