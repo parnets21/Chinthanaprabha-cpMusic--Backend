@@ -20,7 +20,7 @@ dotenv.config();
 // Progress tracking for uploads
 const uploadProgress = new Map();
 
-// Save upload progress to file
+// Save upload progress to file with disk space check
 const saveProgress = (uploadId, progress) => {
   try {
     const progressFile = path.join(__dirname, '..', 'uploads', 'progress', `${uploadId}.json`);
@@ -30,10 +30,19 @@ const saveProgress = (uploadId, progress) => {
       fs.mkdirSync(progressDir, { recursive: true });
     }
     
-    fs.writeFileSync(progressFile, JSON.stringify(progress, null, 2));
-    console.log(`💾 Saved progress for upload ${uploadId}: ${progress.completedParts}/${progress.totalParts} parts`);
+    // Check disk space before writing
+    const stats = fs.statSync(progressDir);
+    if (stats) {
+      fs.writeFileSync(progressFile, JSON.stringify(progress, null, 2));
+      console.log(`💾 Saved progress for upload ${uploadId}: ${progress.completedParts}/${progress.totalParts} parts`);
+    }
   } catch (error) {
-    console.error('Error saving progress:', error);
+    if (error.code === 'ENOSPC') {
+      console.error('❌ No space left on device - cannot save progress');
+      console.error('💡 Run emergency cleanup: ./emergency-cleanup.sh');
+    } else {
+      console.error('Error saving progress:', error);
+    }
   }
 };
 
@@ -163,7 +172,7 @@ const uploadFile = (file, bucketname) => {
 
 // Enhanced multipart upload optimized for t2.micro instances
 const uploadLargeFile = async (file, bucketname, progressCallback = null) => {
-  const CHUNK_SIZE = 1 * 1024 * 1024; // Further reduced to 1MB chunks for t2.micro
+  const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks (AWS S3 minimum part size)
   const filePath = file.path; // For disk storage files
   const fileSize = file.size;
   const key = `${bucketname}/${Date.now() + "_" + file.originalname}`;
@@ -212,6 +221,12 @@ const uploadLargeFile = async (file, bucketname, progressCallback = null) => {
       const start = (partNumber - 1) * CHUNK_SIZE;
       const end = Math.min(start + CHUNK_SIZE, fileSize);
       const partSize = end - start;
+      
+      // Skip parts smaller than 5MB (AWS S3 minimum) except for the last part
+      if (partSize < 5 * 1024 * 1024 && partNumber < totalParts) {
+        console.log(`⚠️ Skipping part ${partNumber} - too small (${partSize} bytes)`);
+        continue;
+      }
       
       console.log(`Uploading part ${partNumber}/${totalParts} (${start}-${end}) - ${Math.round((partNumber / totalParts) * 100)}%`);
       
@@ -672,9 +687,156 @@ const listMultipartParts = async (uploadSession) => {
   }
 };
 
+// Direct S3 upload without local storage (for frontend uploads)
+const uploadDirectToS3 = async (fileBuffer, fileName, contentType, bucketname, progressCallback = null) => {
+  const fileSize = fileBuffer.length;
+  const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks (AWS S3 minimum)
+  const key = `${bucketname}/${Date.now() + "_" + fileName}`;
+  
+  console.log(`🚀 Starting direct S3 upload for ${fileName} (${fileSize} bytes)`);
+  
+  let uploadId = null;
+  
+  try {
+    // Create multipart upload
+    const createParams = {
+      Bucket: process.env.AWS_S3_BUCKET_NAME,
+      Key: key,
+      ContentType: contentType,
+    };
+    
+    const createCommand = new CreateMultipartUploadCommand(createParams);
+    const createResult = await s3Client.send(createCommand);
+    uploadId = createResult.UploadId;
+    
+    console.log(`✅ Created multipart upload: ${uploadId}`);
+    
+    // Upload parts directly from buffer
+    const parts = [];
+    const totalParts = Math.ceil(fileSize / CHUNK_SIZE);
+    let uploadedBytes = 0;
+    
+    for (let partNumber = 1; partNumber <= totalParts; partNumber++) {
+      const start = (partNumber - 1) * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, fileSize);
+      const partSize = end - start;
+      
+      // Skip parts smaller than 5MB except for the last part
+      if (partSize < 5 * 1024 * 1024 && partNumber < totalParts) {
+        console.log(`⚠️ Skipping part ${partNumber} - too small (${partSize} bytes)`);
+        continue;
+      }
+      
+      console.log(`📤 Uploading part ${partNumber}/${totalParts} (${start}-${end}) - ${Math.round((partNumber / totalParts) * 100)}%`);
+      
+      // Call progress callback
+      if (progressCallback) {
+        progressCallback({
+          partNumber,
+          totalParts,
+          percentage: Math.round((partNumber / totalParts) * 100),
+          uploadedBytes,
+          totalBytes: fileSize
+        });
+      }
+      
+      // Extract chunk from buffer
+      const chunkBuffer = fileBuffer.slice(start, end);
+      
+      // Upload part with retry logic
+      let partUploaded = false;
+      let retryCount = 0;
+      const maxRetries = 3;
+      
+      while (!partUploaded && retryCount < maxRetries) {
+        try {
+          const uploadPartParams = {
+            Bucket: process.env.AWS_S3_BUCKET_NAME,
+            Key: key,
+            PartNumber: partNumber,
+            UploadId: uploadId,
+            Body: chunkBuffer,
+          };
+          
+          const uploadPartCommand = new UploadPartCommand(uploadPartParams);
+          const { ETag } = await s3Client.send(uploadPartCommand);
+          
+          parts.push({
+            ETag,
+            PartNumber: partNumber,
+          });
+          
+          uploadedBytes += partSize;
+          partUploaded = true;
+          
+          console.log(`✅ Completed part ${partNumber}/${totalParts} (${Math.round((partNumber / totalParts) * 100)}%)`);
+          
+          // Add delay between chunks for t2.micro
+          if (partNumber < totalParts) {
+            await new Promise(resolve => setTimeout(resolve, 200)); // 200ms delay
+          }
+          
+        } catch (partError) {
+          retryCount++;
+          console.error(`❌ Part ${partNumber} upload failed (attempt ${retryCount}/${maxRetries}):`, partError.message);
+          
+          if (retryCount >= maxRetries) {
+            throw new Error(`Failed to upload part ${partNumber} after ${maxRetries} attempts: ${partError.message}`);
+          }
+          
+          // Wait before retry
+          const waitTime = Math.pow(2, retryCount) * 1000; // 2s, 4s, 8s
+          console.log(`⏳ Waiting ${waitTime}ms before retry...`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+        }
+      }
+    }
+    
+    // Complete multipart upload
+    const completeParams = {
+      Bucket: process.env.AWS_S3_BUCKET_NAME,
+      Key: key,
+      UploadId: uploadId,
+      MultipartUpload: {
+        Parts: parts,
+      },
+    };
+    
+    const completeCommand = new CompleteMultipartUploadCommand(completeParams);
+    await s3Client.send(completeCommand);
+    
+    const location = `https://${process.env.AWS_S3_BUCKET_NAME}.s3.amazonaws.com/${key}`;
+    console.log(`🎉 Direct S3 upload completed: ${location}`);
+    
+    return location;
+    
+  } catch (error) {
+    console.error('❌ Direct S3 upload failed:', error);
+    
+    // Abort multipart upload on error
+    if (uploadId) {
+      try {
+        const abortParams = {
+          Bucket: process.env.AWS_S3_BUCKET_NAME,
+          Key: key,
+          UploadId: uploadId,
+        };
+        const abortCommand = new AbortMultipartUploadCommand(abortParams);
+        await s3Client.send(abortCommand);
+        console.log('🧹 Aborted multipart upload');
+      } catch (abortError) {
+        console.error('❌ Error aborting multipart upload:', abortError);
+      }
+    }
+    
+    throw error;
+  }
+};
+
 module.exports= { 
   uploadFile, 
   uploadFile2, 
+  uploadDirectToS3,
   deleteFile, 
   updateFile, 
   multifileUpload, 

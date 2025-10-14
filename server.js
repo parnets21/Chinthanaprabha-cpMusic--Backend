@@ -238,8 +238,8 @@ app.post("/api/heartbeat", (req, res) => {
     userAgent: req.get('User-Agent'),
     origin: req.get('Origin')
   });
-  res.json({ 
-    status: "alive", 
+  res.json({
+    status: "alive",
     timestamp: new Date().toISOString(),
     message: "Connection heartbeat received"
   });
@@ -252,12 +252,106 @@ app.get("/api/heartbeat", (req, res) => {
     url: req.url,
     timestamp: new Date().toISOString()
   });
-  res.json({ 
-    status: "alive", 
+  res.json({
+    status: "alive",
     timestamp: new Date().toISOString(),
     message: "Connection heartbeat received (GET)"
   });
 });
+
+// Store active SSE connections for real-time progress updates
+const activeConnections = new Map();
+
+// Server-Sent Events endpoint for real-time upload progress
+app.get("/api/upload-progress/:uploadId", (req, res) => {
+  const uploadId = req.params.uploadId;
+  
+  console.log(`📡 SSE connection established for upload: ${uploadId}`);
+  
+  // Set SSE headers
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Cache-Control'
+  });
+
+  // Store connection
+  activeConnections.set(uploadId, res);
+
+  // Send initial connection message
+  res.write(`data: ${JSON.stringify({
+    type: 'connected',
+    uploadId: uploadId,
+    timestamp: new Date().toISOString()
+  })}\n\n`);
+
+  // Handle client disconnect
+  req.on('close', () => {
+    console.log(`📡 SSE connection closed for upload: ${uploadId}`);
+    activeConnections.delete(uploadId);
+  });
+
+  // Keep connection alive with periodic ping
+  const pingInterval = setInterval(() => {
+    if (activeConnections.has(uploadId)) {
+      res.write(`data: ${JSON.stringify({
+        type: 'ping',
+        timestamp: new Date().toISOString()
+      })}\n\n`);
+    } else {
+      clearInterval(pingInterval);
+    }
+  }, 30000); // Ping every 30 seconds
+});
+
+// Function to broadcast progress updates
+const broadcastProgress = (uploadId, progress) => {
+  const connection = activeConnections.get(uploadId);
+  if (connection) {
+    try {
+      connection.write(`data: ${JSON.stringify({
+        type: 'progress',
+        uploadId: uploadId,
+        progress: progress,
+        timestamp: new Date().toISOString()
+      })}\n\n`);
+    } catch (error) {
+      console.error(`Error broadcasting progress for ${uploadId}:`, error);
+      activeConnections.delete(uploadId);
+    }
+  }
+};
+
+// Function to broadcast completion
+const broadcastCompletion = (uploadId, videoUrl, fileName) => {
+  const connection = activeConnections.get(uploadId);
+  if (connection) {
+    try {
+      connection.write(`data: ${JSON.stringify({
+        type: 'completed',
+        uploadId: uploadId,
+        videoUrl: videoUrl,
+        fileName: fileName,
+        timestamp: new Date().toISOString()
+      })}\n\n`);
+      
+      // Close connection after completion
+      setTimeout(() => {
+        connection.end();
+        activeConnections.delete(uploadId);
+      }, 1000);
+    } catch (error) {
+      console.error(`Error broadcasting completion for ${uploadId}:`, error);
+      activeConnections.delete(uploadId);
+    }
+  }
+};
+
+// Make functions available globally
+global.broadcastProgress = broadcastProgress;
+global.broadcastCompletion = broadcastCompletion;
 
 // Serve static files from the "build" directory (assuming your frontend build)
 app.use(express.static(path.join(__dirname, "build")))

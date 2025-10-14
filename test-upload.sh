@@ -23,7 +23,7 @@ echo "Monitor the server logs for progress..."
 # Test the upload endpoint
 curl -X POST \
   -F "video=@test-video.mp4" \
-  http://localhost:5000/chinthanaprabha/upload-video \
+  https://cpsangeetha.com/chinthanaprabha/upload-video \
   --max-time 1800 \
   --progress-bar
 

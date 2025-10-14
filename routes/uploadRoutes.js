@@ -2,7 +2,7 @@ const express = require("express")
 const fs = require("fs")
 const path = require("path")
 const multer = require("multer")
-const { uploadFile2, uploadChunkToS3, completeMultipartUpload, abortMultipartUpload } = require("../middleware/aws")
+const { uploadFile2, uploadDirectToS3, uploadChunkToS3, completeMultipartUpload, abortMultipartUpload } = require("../middleware/aws")
 
 const router = express.Router()
 
@@ -55,29 +55,11 @@ router.post("/test-upload", (req, res, next) => {
   });
 });
 
-// Enhanced upload configuration for large files
-const ensureUploadDir = (dirPath) => {
-  if (!fs.existsSync(dirPath)) {
-    fs.mkdirSync(dirPath, { recursive: true });
-  }
-};
+// All uploads now use memory storage - NO LOCAL FILES
 
-// Disk storage for large files (better for multipart uploads)
-const diskStorage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadDir = path.join(__dirname, '..', 'uploads', 'temp');
-    ensureUploadDir(uploadDir);
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
-  }
-});
-
-// Regular upload for video files (up to 10GB) - using disk storage for better reliability
-const regularUpload = multer({ 
-  storage: diskStorage, // Use disk storage for large files
+// Memory storage for direct S3 upload (no local files)
+const memoryUpload = multer({ 
+  storage: multer.memoryStorage(), // Use memory storage for direct S3 upload
   limits: { 
     fileSize: 10 * 1024 * 1024 * 1024, // 10GB
     fieldSize: 10 * 1024 * 1024 * 1024,
@@ -101,11 +83,35 @@ const regularUpload = multer({
   }
 })
 
-const ensureDir = (dirPath) => {
-  if (!fs.existsSync(dirPath)) {
-    fs.mkdirSync(dirPath, { recursive: true })
+// Disk storage for large files (fallback)
+
+
+const regularUpload = multer({ 
+  storage: multer.memoryStorage(), // Use memory storage - NO LOCAL FILES
+  limits: { 
+    fileSize: 10 * 1024 * 1024 * 1024, // 10GB
+    fieldSize: 10 * 1024 * 1024 * 1024,
+    fieldNameSize: 100,
+    files: 1
+  },
+  fileFilter: (req, file, cb) => {
+    console.log("Multer file filter:", {
+      fieldname: file.fieldname,
+      originalname: file.originalname,
+      mimetype: file.mimetype,
+      size: file.size
+    });
+    
+    // Validate file type
+    if (!file.mimetype.startsWith('video/')) {
+      return cb(new Error('File must be a video'), false);
+    }
+    
+    cb(null, true);
   }
-}
+})
+
+// No longer needed - using memory storage only
 
 // POST /upload - accepts a single chunk and uploads directly to S3
 // Expects multipart/form-data with fields: fileId, chunkIndex, totalChunks, fileName, and file field name: "chunk"
@@ -312,6 +318,9 @@ router.post("/upload-video", regularUpload.single("video"), async (req, res) => 
     console.log(`📹 Starting video upload: ${req.file.originalname}, Size: ${req.file.size} bytes`)
     console.log(`📁 File path: ${req.file.path}`)
 
+    // File is now in memory buffer - no disk space check needed
+    console.log(`✅ File loaded in memory, size: ${req.file.size} bytes`);
+
     // Set response timeout for large files
     res.setTimeout(120 * 60 * 1000); // 120 minutes
 
@@ -320,33 +329,29 @@ router.post("/upload-video", regularUpload.single("video"), async (req, res) => 
       console.log(`📊 Upload progress: ${progress.percentage}% (${progress.partNumber}/${progress.totalParts})`);
     };
 
-    // Upload to AWS S3 using enhanced multipart upload
-    const fileForUpload = {
-      path: req.file.path, // Use disk path for multipart upload
-      originalname: req.file.originalname,
-      mimetype: req.file.mimetype,
-      size: req.file.size
-    };
+    // Upload directly to S3 using buffer (NO LOCAL FILES)
+    console.log(`🚀 Starting direct S3 multipart upload for ${req.file.originalname}...`);
+    const videoUrl = await uploadDirectToS3(
+      req.file.buffer, 
+      req.file.originalname, 
+      req.file.mimetype, 
+      "course-videos", 
+      progressCallback
+    );
+    console.log(`✅ Direct S3 upload completed for ${req.file.originalname}: ${videoUrl}`);
     
-    console.log(`🚀 Starting S3 multipart upload for ${req.file.originalname}...`);
-    const videoUrl = await uploadFile2(fileForUpload, "course-videos", progressCallback)
-    console.log(`✅ S3 upload completed for ${req.file.originalname}: ${videoUrl}`);
-    
-    // Clean up temporary file
-    try {
-      if (fs.existsSync(req.file.path)) {
-        fs.unlinkSync(req.file.path);
-        console.log(`🧹 Cleaned up temporary file: ${req.file.path}`);
-      }
-    } catch (cleanupError) {
-      console.error('⚠️ Error cleaning up temporary file:', cleanupError);
+    // Broadcast completion via SSE
+    if (global.broadcastCompletion) {
+      global.broadcastCompletion(uploadId, videoUrl, req.file.originalname);
     }
     
     res.status(200).json({ 
       message: "Video uploaded successfully", 
       location: videoUrl,
       fileName: req.file.originalname,
-      fileSize: req.file.size
+      fileSize: req.file.size,
+      uploadType: "direct",
+      uploadId: uploadId
     })
   } catch (error) {
     console.error("❌ Video upload error:", error)
@@ -357,15 +362,7 @@ router.post("/upload-video", regularUpload.single("video"), async (req, res) => 
       stack: error.stack
     });
     
-    // Clean up temporary file on error
-    try {
-      if (req.file && req.file.path && fs.existsSync(req.file.path)) {
-        fs.unlinkSync(req.file.path);
-        console.log(`🧹 Cleaned up temporary file after error: ${req.file.path}`);
-      }
-    } catch (cleanupError) {
-      console.error('⚠️ Error cleaning up temporary file after error:', cleanupError);
-    }
+    // No cleanup needed - no local files created
     
     // Provide more specific error messages
     if (error.code === 'ECONNRESET') {
@@ -386,9 +383,106 @@ router.post("/upload-video", regularUpload.single("video"), async (req, res) => 
       return res.status(500).json({ message: "Upload part failed", error: "Network issue during upload. Please try again." })
     } else if (error.message?.includes('Failed to complete multipart upload')) {
       return res.status(500).json({ message: "Upload completion failed", error: "Upload was interrupted. Please try again." })
+    } else if (error.code === 'ENOSPC') {
+      return res.status(507).json({ 
+        message: "Insufficient storage space", 
+        error: "Server is out of disk space. Please contact administrator or try again later." 
+      })
     }
     
     res.status(500).json({ message: "Video upload failed", error: error.message })
+  }
+})
+
+// POST /upload-video-direct - Direct S3 upload without local storage
+router.post("/upload-video-direct", memoryUpload.single("video"), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: "No video file provided" })
+    }
+
+    // Get upload ID from form data or generate one
+    const uploadId = req.body.uploadId || `upload_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    console.log(`🚀 Starting direct S3 upload: ${req.file.originalname}, Size: ${req.file.size} bytes, UploadID: ${uploadId}`)
+
+    // Set response timeout for large files
+    res.setTimeout(120 * 60 * 1000); // 120 minutes
+
+    // Progress tracking callback with SSE broadcasting
+    const progressCallback = (progress) => {
+      console.log(`📊 Direct upload progress: ${progress.percentage}% (${progress.partNumber}/${progress.totalParts})`);
+      
+      // Broadcast progress via SSE
+      if (global.broadcastProgress) {
+        global.broadcastProgress(uploadId, {
+          percentage: progress.percentage,
+          partNumber: progress.partNumber,
+          totalParts: progress.totalParts,
+          uploadedBytes: progress.uploadedBytes,
+          totalBytes: progress.totalBytes
+        });
+      }
+    };
+
+    // Upload directly to S3 using buffer (no local storage)
+    console.log(`🎯 Starting direct S3 multipart upload for ${req.file.originalname}...`);
+    const videoUrl = await uploadDirectToS3(
+      req.file.buffer, 
+      req.file.originalname, 
+      req.file.mimetype, 
+      "course-videos", 
+      progressCallback
+    );
+    console.log(`✅ Direct S3 upload completed for ${req.file.originalname}: ${videoUrl}`);
+    
+    // Broadcast completion via SSE
+    if (global.broadcastCompletion) {
+      global.broadcastCompletion(uploadId, videoUrl, req.file.originalname);
+    }
+    
+    res.status(200).json({ 
+      message: "Video uploaded successfully", 
+      location: videoUrl,
+      fileName: req.file.originalname,
+      fileSize: req.file.size,
+      uploadType: "direct",
+      uploadId: uploadId
+    })
+  } catch (error) {
+    console.error("❌ Direct video upload error:", error)
+    console.error("Error details:", {
+      message: error.message,
+      code: error.code,
+      name: error.name,
+      stack: error.stack
+    });
+    
+    // Provide more specific error messages
+    if (error.code === 'ECONNRESET') {
+      return res.status(500).json({ message: "Connection lost during upload", error: "Please try again" })
+    } else if (error.code === 'ETIMEDOUT') {
+      return res.status(500).json({ message: "Upload timeout", error: "File too large or connection too slow" })
+    } else if (error.message?.includes('timeout')) {
+      return res.status(500).json({ message: "Upload timeout", error: "Please check your connection and try again" })
+    } else if (error.name === 'NoSuchBucket') {
+      return res.status(500).json({ message: "Storage error", error: "AWS S3 bucket not found" })
+    } else if (error.name === 'InvalidAccessKeyId') {
+      return res.status(500).json({ message: "AWS configuration error", error: "Invalid AWS credentials" })
+    } else if (error.name === 'SignatureDoesNotMatch') {
+      return res.status(500).json({ message: "AWS authentication error", error: "AWS credentials mismatch" })
+    } else if (error.message?.includes('Failed to upload part')) {
+      return res.status(500).json({ message: "Upload part failed", error: "Network issue during upload. Please try again." })
+    } else if (error.message?.includes('Failed to complete multipart upload')) {
+      return res.status(500).json({ message: "Upload completion failed", error: "Upload was interrupted. Please try again." })
+    } else if (error.code === 'ENOSPC') {
+      return res.status(507).json({ 
+        message: "Insufficient storage space", 
+        error: "Server is out of disk space. Please contact administrator or try again later." 
+      })
+    }
+    
+    res.status(500).json({ message: "Direct video upload failed", error: error.message })
   }
 })
 
