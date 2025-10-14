@@ -17,6 +17,54 @@ const { pipeline } = require("stream");
 const { promisify } = require("util");
 dotenv.config();
 
+// Progress tracking for uploads
+const uploadProgress = new Map();
+
+// Save upload progress to file
+const saveProgress = (uploadId, progress) => {
+  try {
+    const progressFile = path.join(__dirname, '..', 'uploads', 'progress', `${uploadId}.json`);
+    const progressDir = path.dirname(progressFile);
+    
+    if (!fs.existsSync(progressDir)) {
+      fs.mkdirSync(progressDir, { recursive: true });
+    }
+    
+    fs.writeFileSync(progressFile, JSON.stringify(progress, null, 2));
+    console.log(`💾 Saved progress for upload ${uploadId}: ${progress.completedParts}/${progress.totalParts} parts`);
+  } catch (error) {
+    console.error('Error saving progress:', error);
+  }
+};
+
+// Load upload progress from file
+const loadProgress = (uploadId) => {
+  try {
+    const progressFile = path.join(__dirname, '..', 'uploads', 'progress', `${uploadId}.json`);
+    if (fs.existsSync(progressFile)) {
+      const progress = JSON.parse(fs.readFileSync(progressFile, 'utf8'));
+      console.log(`📂 Loaded progress for upload ${uploadId}: ${progress.completedParts}/${progress.totalParts} parts`);
+      return progress;
+    }
+  } catch (error) {
+    console.error('Error loading progress:', error);
+  }
+  return null;
+};
+
+// Clean up progress file
+const cleanupProgress = (uploadId) => {
+  try {
+    const progressFile = path.join(__dirname, '..', 'uploads', 'progress', `${uploadId}.json`);
+    if (fs.existsSync(progressFile)) {
+      fs.unlinkSync(progressFile);
+      console.log(`🧹 Cleaned up progress file for upload ${uploadId}`);
+    }
+  } catch (error) {
+    console.error('Error cleaning up progress:', error);
+  }
+};
+
 // Helper to log presence of required AWS envs (no secrets)
 const logAwsEnv = () => {
   const present = {
@@ -115,7 +163,7 @@ const uploadFile = (file, bucketname) => {
 
 // Enhanced multipart upload optimized for t2.micro instances
 const uploadLargeFile = async (file, bucketname, progressCallback = null) => {
-  const CHUNK_SIZE = 2 * 1024 * 1024; // Reduced to 2MB chunks for t2.micro memory constraints
+  const CHUNK_SIZE = 1 * 1024 * 1024; // Further reduced to 1MB chunks for t2.micro
   const filePath = file.path; // For disk storage files
   const fileSize = file.size;
   const key = `${bucketname}/${Date.now() + "_" + file.originalname}`;
@@ -144,12 +192,23 @@ const uploadLargeFile = async (file, bucketname, progressCallback = null) => {
     
     console.log(`Created multipart upload: ${uploadId}`);
     
-    // Upload parts with enhanced error handling
+    // Upload parts with enhanced error handling and progress persistence
     const parts = [];
     const totalParts = Math.ceil(fileSize / CHUNK_SIZE);
     let uploadedBytes = 0;
     
-    for (let partNumber = 1; partNumber <= totalParts; partNumber++) {
+    // Check for existing progress
+    const existingProgress = loadProgress(uploadId);
+    let startPart = 1;
+    
+    if (existingProgress && existingProgress.parts && existingProgress.parts.length > 0) {
+      console.log(`🔄 Resuming upload from part ${existingProgress.parts.length + 1}`);
+      parts.push(...existingProgress.parts);
+      uploadedBytes = existingProgress.uploadedBytes || 0;
+      startPart = existingProgress.parts.length + 1;
+    }
+    
+    for (let partNumber = startPart; partNumber <= totalParts; partNumber++) {
       const start = (partNumber - 1) * CHUNK_SIZE;
       const end = Math.min(start + CHUNK_SIZE, fileSize);
       const partSize = end - start;
@@ -207,22 +266,52 @@ const uploadLargeFile = async (file, bucketname, progressCallback = null) => {
           
           console.log(`✅ Completed part ${partNumber}/${totalParts} (${Math.round((partNumber / totalParts) * 100)}%)`);
           
-          // Add delay between chunks to prevent CPU throttling on t2.micro
+          // Save progress after each successful part
+          saveProgress(uploadId, {
+            uploadId,
+            fileName: file.originalname,
+            totalParts,
+            completedParts: parts.length,
+            uploadedBytes,
+            parts: parts,
+            lastUpdated: new Date().toISOString()
+          });
+          
+          // Add longer delay between chunks to prevent CPU throttling on t2.micro
           if (partNumber < totalParts) {
-            await new Promise(resolve => setTimeout(resolve, 100)); // 100ms delay
+            await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay
+          }
+          
+          // Force garbage collection every 10 chunks to free memory
+          if (partNumber % 10 === 0 && global.gc) {
+            console.log(`🧹 Forcing garbage collection after chunk ${partNumber}`);
+            global.gc();
           }
           
         } catch (partError) {
           retryCount++;
           console.error(`❌ Part ${partNumber} upload failed (attempt ${retryCount}/${maxRetries}):`, partError.message);
           
+          // Check for specific error types
+          if (partError.code === 'ECONNRESET' || partError.code === 'ETIMEDOUT' || 
+              partError.message?.includes('timeout') || partError.message?.includes('ECONNRESET')) {
+            console.log(`🔄 Network error detected, will retry with longer delay...`);
+          }
+          
           if (retryCount >= maxRetries) {
+            console.error(`💥 Part ${partNumber} failed permanently after ${maxRetries} attempts`);
             throw new Error(`Failed to upload part ${partNumber} after ${maxRetries} attempts: ${partError.message}`);
           }
           
-          // Wait before retry (exponential backoff)
-          const waitTime = Math.pow(2, retryCount) * 1000; // 2s, 4s, 8s
-          console.log(`⏳ Waiting ${waitTime}ms before retry...`);
+          // Longer wait before retry for t2.micro (exponential backoff with longer delays)
+          const waitTime = Math.pow(2, retryCount) * 2000; // 4s, 8s, 16s
+          console.log(`⏳ Waiting ${waitTime}ms before retry (attempt ${retryCount + 1}/${maxRetries})...`);
+          
+          // Force garbage collection before retry
+          if (global.gc) {
+            global.gc();
+          }
+          
           await new Promise(resolve => setTimeout(resolve, waitTime));
         }
       }
@@ -249,6 +338,9 @@ const uploadLargeFile = async (file, bucketname, progressCallback = null) => {
         
         completed = true;
         console.log(`✅ Multipart upload completed successfully`);
+        
+        // Clean up progress file on successful completion
+        cleanupProgress(uploadId);
         
       } catch (completeError) {
         completeRetryCount++;
