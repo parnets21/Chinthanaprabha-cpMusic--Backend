@@ -92,8 +92,8 @@ class UploadProgressTracker extends EventEmitter {
 
     this.activeUploads.set(uploadId, uploadInfo);
     
-    // Log progress every 10% or every 30 seconds
-    if (percentage % 10 === 0 || elapsed % 30 < 1) {
+    // EC2 t2.micro: Reduce logging frequency to save resources
+    if (percentage % 20 === 0 || elapsed % 60 < 1) {
       console.log(`📈 Progress [${uploadId}]: ${percentage}% (${Math.round(uploadedBytes / 1024 / 1024)}/${Math.round(totalBytes / 1024 / 1024)}MB, ${speed.toFixed(2)}MB/s, ETA: ${eta}s)`);
     }
     

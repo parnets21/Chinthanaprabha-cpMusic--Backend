@@ -33,9 +33,9 @@ server.timeout = 120 * 60 * 1000; // 120 minutes
 server.keepAliveTimeout = 120 * 60 * 1000; // 120 minutes
 server.headersTimeout = 120 * 60 * 1000; // 120 minutes
 
-// Additional configuration for large file uploads
-server.maxConnections = 1000; // Increase max connections
-server.maxHeadersCount = 2000; // Increase max headers
+// EC2 t2.micro optimization: Reduce resource usage
+server.maxConnections = 50; // Reduced for t2.micro
+server.maxHeadersCount = 100; // Reduced for t2.micro
 
 // Prevent server from closing connections during long uploads
 server.on('connection', (socket) => {
@@ -287,8 +287,21 @@ app.get("*", (req, res) => {
 // Initialize WebSocket for upload progress tracking
 uploadProgressTracker.initialize(server);
 
+// EC2 t2.micro: Add memory monitoring
+setInterval(() => {
+  const used = process.memoryUsage();
+  const usedMB = Math.round(used.heapUsed / 1024 / 1024);
+  const totalMB = Math.round(used.heapTotal / 1024 / 1024);
+  
+  if (usedMB > 400) { // Alert if using more than 400MB
+    console.log(`⚠️ High memory usage: ${usedMB}MB/${totalMB}MB`);
+    global.gc && global.gc(); // Force garbage collection if available
+  }
+}, 30000); // Check every 30 seconds
+
 const PORT = process.env.PORT || 5000
 server.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`)
   console.log(`WebSocket server running on ws://localhost:${PORT}/upload-progress`)
+  console.log(`EC2 t2.micro optimizations enabled`)
 })

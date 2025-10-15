@@ -48,12 +48,10 @@ const uploadFile = async (file, bucketname, options = {}) => {
     // Start tracking upload progress
     uploadProgressTracker.startTracking(actualUploadId, file.originalname, fileSize);
 
-    // Handle buffer-based uploads by writing to temp file for large files
-    if (!tempPath && file.buffer && fileSize > 5 * 1024 * 1024) { // 5MB threshold for temp file
-      tempPath = path.join(TEMP_DIR, `temp_${Date.now()}_${file.originalname}`);
-      await fs.mkdir(TEMP_DIR, { recursive: true });
-      await fs.writeFile(tempPath, file.buffer);
-      console.log(`📝 Temp file created: ${tempPath}`);
+    // For EC2 t2.micro: Use buffer directly to save memory
+    // Skip temp file creation to prevent memory issues
+    if (!tempPath && file.buffer) {
+      console.log(`📊 Using buffer directly for ${file.originalname} (${Math.round(fileSize / 1024 / 1024)}MB)`);
     }
 
     // Validate disk-based file existence
@@ -61,7 +59,7 @@ const uploadFile = async (file, bucketname, options = {}) => {
       throw new Error(`File not found: ${tempPath}`);
     }
 
-    const isLargeFile = fileSize > 10 * 1024 * 1024; // 10MB threshold for multipart
+    const isLargeFile = fileSize > 5 * 1024 * 1024; // 5MB threshold for multipart (EC2 t2.micro optimization)
     const params = {
       Bucket: process.env.AWS_S3_BUCKET_NAME,
       Key: key,
@@ -77,15 +75,16 @@ const uploadFile = async (file, bucketname, options = {}) => {
     };
 
     if (isLargeFile) {
-      const partSize = Math.max(10 * 1024 * 1024, Math.min(100 * 1024 * 1024, fileSize / 1000));
+      // EC2 t2.micro optimization: Smaller part size and reduced concurrency
+      const partSize = Math.max(5 * 1024 * 1024, Math.min(20 * 1024 * 1024, fileSize / 1000)); // 5-20MB parts
       console.log(`🔄 Starting multipart upload: ${file.originalname} (${Math.round(fileSize / 1024 / 1024)}MB) with part size ${Math.round(partSize / 1024 / 1024)}MB`);
       
-      // Enhanced multipart upload for large files
+      // Optimized multipart upload for EC2 t2.micro
       uploadInstance = new Upload({
         client: s3Client,
         params,
-        partSize: partSize, // Dynamic part size
-        queueSize: 3, // Optimized concurrency
+        partSize: partSize, // Smaller part size for low memory
+        queueSize: 1, // Reduced concurrency for EC2 t2.micro
         leavePartsOnError: false, // Clean up failed parts
         tags: [
           { Key: 'UploadType', Value: 'Multipart' },
