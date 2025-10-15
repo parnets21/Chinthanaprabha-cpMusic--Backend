@@ -43,23 +43,23 @@ router.post("/upload-thumbnail", upload.single("thumbnail"), async (req, res) =>
 });
 
 // Course routes
-router.get("/courses-lessons/courses", CourseController.getAllCourses);
-router.get("/courses-lessons/courses/:id", CourseController.getCourseById);
+router.get("/courses", CourseController.getAllCourses);
+router.get("/courses/:id", CourseController.getCourseById);
 router.post(
-  "/courses-lessons/courses",
+  "/courses",
   upload.fields([{ name: "thumbnail", maxCount: 1 }]),
   CourseController.createCourse
 );
 router.put(
-  "/courses-lessons/courses/:id",
+  "/courses/:id",
   upload.fields([{ name: "thumbnail", maxCount: 1 }]),
   CourseController.updateCourse
 );
-router.delete("/courses-lessons/courses/:id", CourseController.deleteCourse);
+router.delete("/courses/:id", CourseController.deleteCourse);
 
 // Lesson routes
 router.post(
-  "/courses-lessons/courses/:courseId/lessons",
+  "/courses/:courseId/lessons",
   upload.fields([
     { name: "video", maxCount: 10 },
     { name: "thumbnail", maxCount: 1 },
@@ -67,13 +67,13 @@ router.post(
   CourseController.addLesson
 );
 router.put(
-  "/courses-lessons/lessons/:lessonId",
+  "/lessons/:lessonId",
   upload.fields([
     { name: "video", maxCount: 10 },
     { name: "thumbnail", maxCount: 1 },
   ]),
   CourseController.updateLesson
 );
-router.delete("/courses-lessons/lessons/:lessonId", CourseController.deleteLesson);
+router.delete("/lessons/:lessonId", CourseController.deleteLesson);
 
 module.exports = router;

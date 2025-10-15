@@ -268,7 +268,12 @@ app.use(express.static(path.join(__dirname, "build")))
 app.use("/uploads", express.static(path.join(__dirname, "uploads")))
 
 // Redirect all other requests to the index.html file for client-side routing
+// But only for non-API routes
 app.get("*", (req, res) => {
+  // Don't redirect API routes to index.html
+  if (req.path.startsWith('/api/') || req.path.startsWith('/chinthanaprabha/')) {
+    return res.status(404).json({ message: 'API endpoint not found' });
+  }
   return res.sendFile(path.join(__dirname, "build", "index.html"))
 })
 
