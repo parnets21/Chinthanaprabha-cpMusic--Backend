@@ -333,8 +333,10 @@ exports.addLesson = async (req, res) => {
       return res.status(400).json({ message: "At least one video is required" });
     }
 
-    // Handle thumbnail upload
+    // Handle thumbnail upload or URL
     let thumbnailUrl = null;
+    
+    // Check if thumbnail is provided as a file upload
     const thumbnailFile = req.files?.thumbnail?.[0];
     if (thumbnailFile) {
       try {
@@ -344,6 +346,10 @@ exports.addLesson = async (req, res) => {
         await session.abortTransaction();
         return res.status(500).json({ message: "Failed to upload thumbnail", error: uploadError.message });
       }
+    }
+    // Check if thumbnail is provided as a URL string
+    else if (req.body.thumbnail) {
+      thumbnailUrl = req.body.thumbnail;
     }
 
     // Create lesson
@@ -434,8 +440,10 @@ exports.updateLesson = async (req, res) => {
       }
     }
 
-    // Handle thumbnail upload
+    // Handle thumbnail upload or URL
     let thumbnailUrl = existingLesson.thumbnail; // Keep existing thumbnail if no new one
+    
+    // Check if thumbnail is provided as a file upload
     const thumbnailFile = req.files?.thumbnail?.[0];
     if (thumbnailFile) {
       try {
@@ -445,6 +453,10 @@ exports.updateLesson = async (req, res) => {
         await session.abortTransaction();
         return res.status(500).json({ message: "Failed to upload thumbnail", error: uploadError.message });
       }
+    }
+    // Check if thumbnail is provided as a URL string
+    else if (req.body.thumbnail) {
+      thumbnailUrl = req.body.thumbnail;
     }
 
     const updateData = {
