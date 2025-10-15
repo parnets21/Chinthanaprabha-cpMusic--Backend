@@ -17,7 +17,7 @@ const upload = multer({
 // Health check
 router.get("/health", (req, res) => res.json({ message: "Course service running" }));
 
-// File upload routes (for direct video and thumbnail uploads) with enhanced error handling
+// File upload routes with real-time progress tracking
 router.post("/upload-video", upload.single("video"), async (req, res) => {
   try {
     if (!req.file) {
@@ -34,11 +34,63 @@ router.post("/upload-video", upload.single("video"), async (req, res) => {
       return res.status(400).json({ message: "File size exceeds 10GB limit" });
     }
 
-    const result = await uploadFile(req.file, "course-videos");
-    res.status(200).json({ location: result.location });
+    console.log(`📹 Starting upload: ${req.file.originalname} (${Math.round(req.file.size / 1024 / 1024)}MB)`);
+
+    // Set headers for Server-Sent Events
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Headers', 'Cache-Control');
+
+    // Set response timeout for large files
+    res.setTimeout(1800000); // 30 minutes
+
+    // Progress tracking callback that sends real-time updates
+    const progressCallback = (progress) => {
+      // Send progress update to client
+      res.write(`data: ${JSON.stringify({
+        type: 'progress',
+        percentage: progress.percentage,
+        uploadedMB: progress.uploadedMB,
+        totalMB: progress.totalMB,
+        currentSpeed: progress.currentSpeed,
+        eta: progress.eta,
+        elapsed: progress.elapsed,
+        fileName: progress.metadata?.fileName || req.file.originalname
+      })}\n\n`);
+    };
+
+    const result = await uploadFile(req.file, "course-videos", {
+      progressCallback,
+      timeout: 1800000, // 30 minutes
+      metadata: {
+        fileName: req.file.originalname,
+        uploadTime: new Date().toISOString()
+      }
+    });
+
+    // Send final success response
+    res.write(`data: ${JSON.stringify({
+      type: 'complete',
+      location: result.location,
+      fileName: req.file.originalname,
+      fileSize: req.file.size,
+      uploadTime: result.metadata.uploadTime
+    })}\n\n`);
+    
+    res.end();
   } catch (error) {
     console.error("Video upload error:", error);
-    res.status(500).json({ message: "Error uploading video", error: error.message });
+    
+    // Send error response
+    res.write(`data: ${JSON.stringify({
+      type: 'error',
+      message: error.message,
+      fileName: req.file?.originalname || 'unknown'
+    })}\n\n`);
+    
+    res.end();
   }
 });
 
