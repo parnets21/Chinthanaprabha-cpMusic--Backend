@@ -24,9 +24,12 @@ const io = new Server(server, {
   },
 })
 
+// Initialize Socket.IO upload progress tracking
+uploadProgressTracker.initialize(io);
+
 // Middleware to parse JSON
-app.use(express.json({ limit: '10gb' }));
-app.use(express.urlencoded({ extended: true, limit: '10gb' }));
+app.use(express.json({ limit: "12gb" }));
+app.use(express.urlencoded({ limit: "12gb", extended: true }));
 
 // Set timeout for large file uploads (120 minutes)
 server.timeout = 120 * 60 * 1000; // 120 minutes
@@ -290,9 +293,6 @@ app.get("*", (req, res) => {
   }
   return res.sendFile(path.join(__dirname, "build", "index.html"))
 })
-
-// Initialize Socket.IO upload progress tracking
-uploadProgressTracker.initialize(io);
 
 // EC2 t2.micro: Add memory monitoring
 setInterval(() => {
