@@ -1,5 +1,6 @@
-const { S3Client, PutObjectCommand, DeleteObjectCommand, AbortMultipartUploadCommand } = require("@aws-sdk/client-s3");
+const { S3Client, PutObjectCommand, DeleteObjectCommand, AbortMultipartUploadCommand, CreateMultipartUploadCommand, UploadPartCommand, CompleteMultipartUploadCommand, AbortMultipartUploadCommand: AbortMultipartUpload } = require("@aws-sdk/client-s3");
 const { Upload } = require("@aws-sdk/lib-storage");
+const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 const dotenv = require("dotenv");
 const fs = require("fs").promises;
 const path = require("path");
@@ -272,4 +273,148 @@ const multifileUpload = async (files, bucketname, options = {}) => {
   return results;
 };
 
-module.exports = { uploadFile, deleteFile, multifileUpload };
+// Generate presigned URL for direct S3 upload (up to 10GB)
+const generatePresignedUrl = async (fileName, fileType, fileSize, bucketName = "course-videos") => {
+  try {
+    const key = `${bucketName}/${Date.now()}_${fileName}`;
+    const uploadId = `upload_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    console.log(`🔗 Generating presigned URL for: ${fileName} (${Math.round(fileSize / 1024 / 1024)}MB)`);
+    
+    // For files larger than 5MB, use multipart upload
+    if (fileSize > 5 * 1024 * 1024) {
+      // Create multipart upload
+      const createMultipartUploadCommand = new CreateMultipartUploadCommand({
+        Bucket: process.env.AWS_S3_BUCKET_NAME,
+        Key: key,
+        ContentType: fileType,
+        Metadata: {
+          originalName: fileName,
+          uploadTime: new Date().toISOString(),
+          fileSize: fileSize.toString(),
+          uploadId: uploadId
+        }
+      });
+      
+      const multipartUpload = await s3Client.send(createMultipartUploadCommand);
+      
+      return {
+        uploadId: multipartUpload.UploadId,
+        key: key,
+        bucket: process.env.AWS_S3_BUCKET_NAME,
+        region: process.env.AWS_REGION,
+        multipart: true,
+        location: `https://${process.env.AWS_S3_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`,
+        metadata: {
+          originalName: fileName,
+          uploadTime: new Date().toISOString(),
+          fileSize: fileSize,
+          uploadId: uploadId
+        }
+      };
+    } else {
+      // For smaller files, use simple presigned URL
+      const putObjectCommand = new PutObjectCommand({
+        Bucket: process.env.AWS_S3_BUCKET_NAME,
+        Key: key,
+        ContentType: fileType,
+        Metadata: {
+          originalName: fileName,
+          uploadTime: new Date().toISOString(),
+          fileSize: fileSize.toString(),
+          uploadId: uploadId
+        }
+      });
+      
+      const presignedUrl = await getSignedUrl(s3Client, putObjectCommand, { 
+        expiresIn: 3600 // 1 hour
+      });
+      
+      return {
+        presignedUrl: presignedUrl,
+        key: key,
+        bucket: process.env.AWS_S3_BUCKET_NAME,
+        region: process.env.AWS_REGION,
+        multipart: false,
+        location: `https://${process.env.AWS_S3_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`,
+        metadata: {
+          originalName: fileName,
+          uploadTime: new Date().toISOString(),
+          fileSize: fileSize,
+          uploadId: uploadId
+        }
+      };
+    }
+  } catch (error) {
+    console.error(`❌ Error generating presigned URL: ${error.message}`);
+    throw error;
+  }
+};
+
+// Generate presigned URL for multipart upload part
+const generateMultipartPresignedUrl = async (bucket, key, uploadId, partNumber) => {
+  try {
+    const uploadPartCommand = new UploadPartCommand({
+      Bucket: bucket,
+      Key: key,
+      UploadId: uploadId,
+      PartNumber: partNumber
+    });
+    
+    const presignedUrl = await getSignedUrl(s3Client, uploadPartCommand, { 
+      expiresIn: 3600 // 1 hour
+    });
+    
+    return presignedUrl;
+  } catch (error) {
+    console.error(`❌ Error generating multipart presigned URL: ${error.message}`);
+    throw error;
+  }
+};
+
+// Complete multipart upload
+const completeMultipartUpload = async (bucket, key, uploadId, parts) => {
+  try {
+    const completeMultipartUploadCommand = new CompleteMultipartUploadCommand({
+      Bucket: bucket,
+      Key: key,
+      UploadId: uploadId,
+      MultipartUpload: {
+        Parts: parts
+      }
+    });
+    
+    const result = await s3Client.send(completeMultipartUploadCommand);
+    return result;
+  } catch (error) {
+    console.error(`❌ Error completing multipart upload: ${error.message}`);
+    throw error;
+  }
+};
+
+// Abort multipart upload
+const abortMultipartUpload = async (bucket, key, uploadId) => {
+  try {
+    const abortMultipartUploadCommand = new AbortMultipartUploadCommand({
+      Bucket: bucket,
+      Key: key,
+      UploadId: uploadId
+    });
+    
+    await s3Client.send(abortMultipartUploadCommand);
+    console.log(`🧹 Aborted multipart upload: ${uploadId}`);
+  } catch (error) {
+    console.error(`❌ Error aborting multipart upload: ${error.message}`);
+    throw error;
+  }
+};
+
+module.exports = { 
+  uploadFile, 
+  deleteFile, 
+  multifileUpload, 
+  generatePresignedUrl, 
+  generateMultipartPresignedUrl, 
+  completeMultipartUpload, 
+  abortMultipartUpload 
+};

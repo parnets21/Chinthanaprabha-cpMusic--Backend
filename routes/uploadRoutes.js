@@ -1,6 +1,6 @@
 const express = require("express");
 const multer = require("multer");
-const { uploadFile, deleteFile } = require("../middleware/aws");
+const { uploadFile, deleteFile, generatePresignedUrl, generateMultipartPresignedUrl, completeMultipartUpload, abortMultipartUpload } = require("../middleware/aws");
 
 const router = express.Router();
 
@@ -137,6 +137,112 @@ router.post("/upload-thumbnail", upload.single("thumbnail"), async (req, res) =>
     res.status(errorResponse.status).json({
       message: errorResponse.message,
       error: errorResponse.error,
+    });
+  }
+});
+
+// Generate presigned URL for direct S3 upload
+router.post("/presigned-url", async (req, res) => {
+  try {
+    const { fileName, fileType, fileSize, bucketName = "course-videos" } = req.body;
+    
+    if (!fileName || !fileType || !fileSize) {
+      return res.status(400).json({ 
+        message: "Missing required fields: fileName, fileType, fileSize" 
+      });
+    }
+    
+    if (fileSize > 10 * 1024 * 1024 * 1024) {
+      return res.status(400).json({ 
+        message: "File size exceeds 10GB limit" 
+      });
+    }
+    
+    console.log(`🔗 Generating presigned URL for: ${fileName} (${Math.round(fileSize / 1024 / 1024)}MB)`);
+    
+    const result = await generatePresignedUrl(fileName, fileType, fileSize, bucketName);
+    
+    res.status(200).json(result);
+  } catch (error) {
+    console.error(`❌ Error generating presigned URL: ${error.message}`);
+    res.status(500).json({
+      message: "Failed to generate presigned URL",
+      error: error.message
+    });
+  }
+});
+
+// Generate presigned URL for multipart upload part
+router.post("/presigned-url-multipart", async (req, res) => {
+  try {
+    const { bucket, key, uploadId, partNumber } = req.body;
+    
+    if (!bucket || !key || !uploadId || !partNumber) {
+      return res.status(400).json({ 
+        message: "Missing required fields: bucket, key, uploadId, partNumber" 
+      });
+    }
+    
+    const presignedUrl = await generateMultipartPresignedUrl(bucket, key, uploadId, partNumber);
+    
+    res.status(200).json({ presignedUrl });
+  } catch (error) {
+    console.error(`❌ Error generating multipart presigned URL: ${error.message}`);
+    res.status(500).json({
+      message: "Failed to generate multipart presigned URL",
+      error: error.message
+    });
+  }
+});
+
+// Complete multipart upload
+router.post("/complete-multipart", async (req, res) => {
+  try {
+    const { bucket, key, uploadId, parts } = req.body;
+    
+    if (!bucket || !key || !uploadId || !parts) {
+      return res.status(400).json({ 
+        message: "Missing required fields: bucket, key, uploadId, parts" 
+      });
+    }
+    
+    const result = await completeMultipartUpload(bucket, key, uploadId, parts);
+    
+    res.status(200).json({
+      message: "Multipart upload completed successfully",
+      location: result.Location,
+      etag: result.ETag
+    });
+  } catch (error) {
+    console.error(`❌ Error completing multipart upload: ${error.message}`);
+    res.status(500).json({
+      message: "Failed to complete multipart upload",
+      error: error.message
+    });
+  }
+});
+
+// Abort multipart upload
+router.post("/abort-multipart", async (req, res) => {
+  try {
+    const { bucket, key, uploadId } = req.body;
+    
+    if (!bucket || !key || !uploadId) {
+      return res.status(400).json({ 
+        message: "Missing required fields: bucket, key, uploadId" 
+      });
+    }
+    
+    await abortMultipartUpload(bucket, key, uploadId);
+    
+    res.status(200).json({
+      message: "Multipart upload aborted successfully"
+    });
+  } catch (error) {
+    console.error(`❌ Error aborting multipart upload: ${error.message}`);
+    res.status(500).json({
+      message: "Failed to abort multipart upload",
+      error: error.message
     });
   }
 });
