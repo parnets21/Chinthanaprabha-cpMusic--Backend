@@ -9,6 +9,7 @@ const path = require("path")
 const http = require("http") // Import http module
 const { Server } = require("socket.io") // Import Server from socket.io
 const { sendChatMessageNotification } = require("./controllers/notificationController")
+const uploadProgressTracker = require("./websocket/uploadProgress")
 
 // Load environment variables from .env file
 dotenv.config()
@@ -277,7 +278,11 @@ app.get("*", (req, res) => {
   return res.sendFile(path.join(__dirname, "build", "index.html"))
 })
 
+// Initialize WebSocket for upload progress tracking
+uploadProgressTracker.initialize(server);
+
 const PORT = process.env.PORT || 5000
 server.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`)
+  console.log(`WebSocket server running on ws://localhost:${PORT}/upload-progress`)
 })

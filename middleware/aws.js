@@ -4,6 +4,7 @@ const dotenv = require("dotenv");
 const fs = require("fs").promises;
 const path = require("path");
 const stream = require("stream");
+const uploadProgressTracker = require("../websocket/uploadProgress");
 
 dotenv.config();
 
@@ -22,12 +23,15 @@ const s3Client = new S3Client({
 // Temporary directory for buffer-based uploads
 const TEMP_DIR = path.join(__dirname, "..", "Uploads", "temp");
 
-// Enhanced upload function for files up to 10GB with proper error handling
+// Enhanced upload function for files up to 10GB with real-time WebSocket progress
 const uploadFile = async (file, bucketname, options = {}) => {
-  const { progressCallback = null, metadata = {}, timeout = 600000 } = options; // 10 min default timeout
+  const { progressCallback = null, metadata = {}, timeout = 600000, uploadId = null } = options;
   const fileSize = file.size || 0;
   const key = `${bucketname}/${Date.now()}_${file.originalname}`;
-  console.log(`📤 Uploading: ${file.originalname} (${Math.round(fileSize / 1024 / 1024)}MB)`);
+  const actualUploadId = uploadId || `upload_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  
+  console.log(`📤 Uploading: ${file.originalname} (${Math.round(fileSize / 1024 / 1024)}MB) - ID: ${actualUploadId}`);
+  console.log(`📊 File details: Size=${fileSize} bytes, Type=${file.mimetype}, Buffer=${!!file.buffer}, Path=${file.path}`);
 
   // Validate inputs
   if (!file || (!file.buffer && !file.path) || !file.originalname || !file.mimetype) {
@@ -41,6 +45,9 @@ const uploadFile = async (file, bucketname, options = {}) => {
   const startTime = Date.now();
   
   try {
+    // Start tracking upload progress
+    uploadProgressTracker.startTracking(actualUploadId, file.originalname, fileSize);
+
     // Handle buffer-based uploads by writing to temp file for large files
     if (!tempPath && file.buffer && fileSize > 5 * 1024 * 1024) { // 5MB threshold for temp file
       tempPath = path.join(TEMP_DIR, `temp_${Date.now()}_${file.originalname}`);
@@ -64,33 +71,42 @@ const uploadFile = async (file, bucketname, options = {}) => {
         ...metadata,
         originalName: file.originalname,
         uploadTime: new Date().toISOString(),
-        fileSize: fileSize.toString()
+        fileSize: fileSize.toString(),
+        uploadId: actualUploadId
       },
     };
 
     if (isLargeFile) {
+      const partSize = Math.max(10 * 1024 * 1024, Math.min(100 * 1024 * 1024, fileSize / 1000));
+      console.log(`🔄 Starting multipart upload: ${file.originalname} (${Math.round(fileSize / 1024 / 1024)}MB) with part size ${Math.round(partSize / 1024 / 1024)}MB`);
+      
       // Enhanced multipart upload for large files
       uploadInstance = new Upload({
         client: s3Client,
         params,
-        partSize: Math.max(10 * 1024 * 1024, Math.min(100 * 1024 * 1024, fileSize / 1000)), // Dynamic part size
+        partSize: partSize, // Dynamic part size
         queueSize: 3, // Optimized concurrency
         leavePartsOnError: false, // Clean up failed parts
         tags: [
           { Key: 'UploadType', Value: 'Multipart' },
-          { Key: 'FileSize', Value: fileSize.toString() }
+          { Key: 'FileSize', Value: fileSize.toString() },
+          { Key: 'UploadId', Value: actualUploadId }
         ]
       });
 
-      // Enhanced progress tracking
-      if (progressCallback) {
-        uploadInstance.on("httpUploadProgress", (progress) => {
-          const percentage = Math.round((progress.loaded / progress.total) * 100);
-          const uploadedMB = Math.round(progress.loaded / 1024 / 1024);
-          const totalMB = Math.round(progress.total / 1024 / 1024);
-          const elapsed = (Date.now() - startTime) / 1000;
-          const speed = progress.loaded / Math.max(elapsed, 0.1) / 1024 / 1024;
-          
+      // Enhanced progress tracking with WebSocket
+      uploadInstance.on("httpUploadProgress", (progress) => {
+        const percentage = Math.round((progress.loaded / progress.total) * 100);
+        const uploadedMB = Math.round(progress.loaded / 1024 / 1024);
+        const totalMB = Math.round(progress.total / 1024 / 1024);
+        const elapsed = (Date.now() - startTime) / 1000;
+        const speed = progress.loaded / Math.max(elapsed, 0.1) / 1024 / 1024;
+        
+        // Send real-time progress via WebSocket
+        uploadProgressTracker.updateProgress(actualUploadId, progress.loaded, progress.total);
+        
+        // Also call local progress callback if provided
+        if (progressCallback) {
           const progressData = {
             percentage,
             uploadedMB,
@@ -100,13 +116,13 @@ const uploadFile = async (file, bucketname, options = {}) => {
             currentSpeed: speed.toFixed(2),
             eta: Math.round((progress.total - progress.loaded) / (speed * 1024 * 1024)),
             elapsed: Math.round(elapsed),
-            metadata: { ...metadata, fileName: file.originalname }
+            metadata: { ...metadata, fileName: file.originalname, uploadId: actualUploadId }
           };
-          
           progressCallback(progressData);
-          console.log(`📈 Progress: ${percentage}% (${uploadedMB}/${totalMB}MB, ${speed.toFixed(2)}MB/s, ETA: ${progressData.eta}s)`);
-        });
-      }
+        }
+        
+        console.log(`📈 AWS S3 Progress [${actualUploadId}]: ${percentage}% (${uploadedMB}/${totalMB}MB, ${speed.toFixed(2)}MB/s)`);
+      });
 
       // Set timeout for large uploads
       const uploadPromise = uploadInstance.done();
@@ -123,14 +139,21 @@ const uploadFile = async (file, bucketname, options = {}) => {
       });
 
       await Promise.race([uploadPromise, timeoutPromise]);
+      
+      // Update progress for small files
+      uploadProgressTracker.updateProgress(actualUploadId, fileSize, fileSize);
     }
 
     const location = `https://${process.env.AWS_S3_BUCKET_NAME}.s3.amazonaws.com/${key}`;
     const uploadTime = (Date.now() - startTime) / 1000;
-    console.log(`✅ Uploaded: ${location} (${uploadTime.toFixed(2)}s)`);
+    console.log(`✅ Uploaded [${actualUploadId}]: ${location} (${uploadTime.toFixed(2)}s)`);
+    
+    // Complete upload tracking
+    uploadProgressTracker.completeUpload(actualUploadId, location);
     
     return { 
       location, 
+      uploadId: actualUploadId,
       metadata: {
         ...metadata,
         uploadTime: uploadTime,
@@ -139,7 +162,10 @@ const uploadFile = async (file, bucketname, options = {}) => {
       }
     };
   } catch (error) {
-    console.error(`❌ Upload failed: ${error.message}`);
+    console.error(`❌ Upload failed [${actualUploadId}]: ${error.message}`);
+    
+    // Fail upload tracking
+    uploadProgressTracker.failUpload(actualUploadId, error);
     
     // Clean up failed multipart upload
     if (uploadInstance && isLargeFile) {
