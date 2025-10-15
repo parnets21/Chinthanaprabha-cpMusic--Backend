@@ -84,3 +84,4 @@ echo "   1. Consider upgrading to t3.small (2GB RAM, more storage)"
 echo "   2. Add swap space: sudo fallocate -l 2G /swapfile"
 echo "   3. Monitor disk usage regularly"
 echo "   4. Clean up uploads directory weekly"
+

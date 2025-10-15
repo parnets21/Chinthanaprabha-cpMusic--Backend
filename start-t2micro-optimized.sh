@@ -39,3 +39,4 @@ pm2 status
 echo "✅ Server started successfully!"
 echo "📊 Monitor with: pm2 monit"
 echo "📝 Logs with: pm2 logs"
+

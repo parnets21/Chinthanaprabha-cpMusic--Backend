@@ -41,3 +41,4 @@ echo "CPU: $(nproc) cores"
 # Start the application
 echo "🎯 Starting application with optimized settings..."
 node server.js
+

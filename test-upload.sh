@@ -34,3 +34,4 @@ echo "Check server logs for detailed progress information"
 # Clean up
 cd /
 rm -rf /tmp/upload-test
+
