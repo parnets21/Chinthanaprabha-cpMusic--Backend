@@ -1,32 +1,12 @@
 const express = require("express");
 const multer = require("multer");
-const path = require("path");
-const fs = require("fs");
 const { uploadFile, deleteFile } = require("../middleware/aws");
 
 const router = express.Router();
 
-// Create uploads directory if it doesn't exist
-const uploadsDir = path.join(__dirname, "..", "uploads", "temp");
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-}
-
-// Disk storage for large files to prevent memory overflow
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadsDir);
-  },
-  filename: (req, file, cb) => {
-    // Generate unique filename with timestamp
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
-  }
-});
-
-// Configure multer with disk storage for large files
+// Memory storage for uploads (no disk storage)
 const upload = multer({
-  storage: storage,
+  storage: multer.memoryStorage(),
   limits: {
     fileSize: 10 * 1024 * 1024 * 1024, // 10GB limit
     fieldSize: 10 * 1024 * 1024 * 1024,
@@ -52,10 +32,8 @@ router.get("/health", (req, res) => {
   res.json({ message: "Upload service is running", timestamp: new Date().toISOString() });
 });
 
-// Video upload endpoint (up to 10GB) - Now using disk storage for large files
+// Video upload endpoint (up to 10GB)
 router.post("/upload-video", upload.single("video"), async (req, res) => {
-  let tempFilePath = null;
-  
   try {
     console.log(`📹 Upload request received: ${req.file ? req.file.originalname : 'No file'}`);
     console.log(`📹 Request body:`, req.body);
@@ -92,12 +70,9 @@ router.post("/upload-video", upload.single("video"), async (req, res) => {
       );
     };
 
-    // Store temp file path for cleanup
-    tempFilePath = req.file.path;
-
     const result = await uploadFile(
       {
-        path: req.file.path, // Use file path instead of buffer for streaming
+        buffer: req.file.buffer,
         originalname: req.file.originalname,
         mimetype: req.file.mimetype,
         size: req.file.size,
@@ -124,16 +99,6 @@ router.post("/upload-video", upload.single("video"), async (req, res) => {
       message: errorResponse.message,
       error: errorResponse.error,
     });
-  } finally {
-    // Clean up temporary file after upload (success or failure)
-    if (tempFilePath && fs.existsSync(tempFilePath)) {
-      try {
-        fs.unlinkSync(tempFilePath);
-        console.log(`🧹 Cleaned up temp file: ${tempFilePath}`);
-      } catch (cleanupError) {
-        console.error(`❌ Error cleaning up temp file: ${cleanupError.message}`);
-      }
-    }
   }
 });
 

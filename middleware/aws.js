@@ -49,35 +49,22 @@ const uploadFile = async (file, bucketname, options = {}) => {
     // Start tracking upload progress
     uploadProgressTracker.startTracking(actualUploadId, file.originalname, fileSize);
 
-    // For EC2 t2.micro: Prefer file streams over buffers for large files
-    if (tempPath) {
-      console.log(`📊 Using file stream for ${file.originalname} (${Math.round(fileSize / 1024 / 1024)}MB)`);
-      // Validate disk-based file existence
-      if (!(await fs.access(tempPath).then(() => true).catch(() => false))) {
-        throw new Error(`File not found: ${tempPath}`);
-      }
-    } else if (file.buffer) {
+    // For EC2 t2.micro: Use buffer directly to save memory
+    // Skip temp file creation to prevent memory issues
+    if (!tempPath && file.buffer) {
       console.log(`📊 Using buffer directly for ${file.originalname} (${Math.round(fileSize / 1024 / 1024)}MB)`);
-    } else {
-      throw new Error("No file buffer or path provided");
+    }
+
+    // Validate disk-based file existence
+    if (tempPath && !(await fs.access(tempPath).then(() => true).catch(() => false))) {
+      throw new Error(`File not found: ${tempPath}`);
     }
 
     const isLargeFile = fileSize > 5 * 1024 * 1024; // 5MB threshold for multipart (EC2 t2.micro optimization)
-    
-    // Create appropriate body for upload - prefer streams for large files
-    let body;
-    if (tempPath) {
-      body = fs.createReadStream(tempPath);
-      console.log(`📊 Created read stream from: ${tempPath}`);
-    } else {
-      body = file.buffer;
-      console.log(`📊 Using buffer for upload`);
-    }
-    
     const params = {
       Bucket: process.env.AWS_S3_BUCKET_NAME,
       Key: key,
-      Body: body,
+      Body: tempPath ? fs.createReadStream(tempPath) : file.buffer,
       ContentType: file.mimetype,
       Metadata: {
         ...metadata,
