@@ -4,7 +4,7 @@ const dotenv = require("dotenv");
 const fs = require("fs").promises;
 const path = require("path");
 const stream = require("stream");
-const uploadProgressTracker = require("../websocket/uploadProgress");
+const uploadProgressTracker = require("../websocket/socketUploadProgress");
 
 dotenv.config();
 

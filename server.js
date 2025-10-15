@@ -9,7 +9,7 @@ const path = require("path")
 const http = require("http") // Import http module
 const { Server } = require("socket.io") // Import Server from socket.io
 const { sendChatMessageNotification } = require("./controllers/notificationController")
-const uploadProgressTracker = require("./websocket/uploadProgress")
+const uploadProgressTracker = require("./websocket/socketUploadProgress")
 
 // Load environment variables from .env file
 dotenv.config()
@@ -186,6 +186,13 @@ io.on("connection", (socket) => {
     console.log(`User ${socket.id} joined room: ${roomName}`)
   })
 
+  // Handle upload progress subscription
+  socket.on("subscribeUpload", ({ uploadId }) => {
+    socket.uploadId = uploadId;
+    socket.join(`upload-${uploadId}`);
+    console.log(`📡 Client ${socket.id} subscribed to upload: ${uploadId}`);
+  })
+
   // Handle sending messages
   socket.on("sendMessage", async (messageData) => {
     try {
@@ -284,8 +291,8 @@ app.get("*", (req, res) => {
   return res.sendFile(path.join(__dirname, "build", "index.html"))
 })
 
-// Initialize WebSocket for upload progress tracking
-uploadProgressTracker.initialize(server);
+// Initialize Socket.IO upload progress tracking
+uploadProgressTracker.initialize(io);
 
 // EC2 t2.micro: Add memory monitoring
 setInterval(() => {
@@ -302,6 +309,6 @@ setInterval(() => {
 const PORT = process.env.PORT || 5000
 server.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`)
-  console.log(`WebSocket server running on ws://localhost:${PORT}/upload-progress`)
+  console.log(`Socket.IO server running on ws://localhost:${PORT}`)
   console.log(`EC2 t2.micro optimizations enabled`)
 })
