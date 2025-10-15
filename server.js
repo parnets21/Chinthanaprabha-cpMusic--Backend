@@ -10,6 +10,7 @@ const http = require("http") // Import http module
 const { Server } = require("socket.io") // Import Server from socket.io
 const { sendChatMessageNotification } = require("./controllers/notificationController")
 const uploadProgressTracker = require("./websocket/socketUploadProgress")
+const { cleanupTempFiles } = require("./cleanup-temp-files")
 
 // Load environment variables from .env file
 dotenv.config()
@@ -27,9 +28,9 @@ const io = new Server(server, {
 // Initialize Socket.IO upload progress tracking
 uploadProgressTracker.initialize(io);
 
-// Middleware to parse JSON
-app.use(express.json({ limit: "12gb" }));
-app.use(express.urlencoded({ limit: "12gb", extended: true }));
+// Middleware to parse JSON - Reduced limits for EC2 t2.micro
+app.use(express.json({ limit: "50mb" })); // Reduced from 12gb to prevent memory issues
+app.use(express.urlencoded({ limit: "50mb", extended: true })); // Reduced from 12gb
 
 // Set timeout for large file uploads (120 minutes)
 server.timeout = 120 * 60 * 1000; // 120 minutes
@@ -71,26 +72,44 @@ try {
   })
 } catch (_) {}
 
-// Lightweight system monitoring for t2.micro
+// Enhanced system monitoring for t2.micro with better memory management
 const monitorSystem = () => {
   const used = process.memoryUsage();
   const totalMB = Math.round(used.heapTotal / 1024 / 1024);
   const usedMB = Math.round(used.heapUsed / 1024 / 1024);
+  const rssMB = Math.round(used.rss / 1024 / 1024);
 
-  // Only log if memory usage is high (over 80% of heap)
-  if (usedMB > totalMB * 0.8) {
-    console.log(`⚠️ High memory usage: ${usedMB}MB/${totalMB}MB`);
+  // Log memory usage more frequently for debugging
+  console.log(`📊 Memory: Heap ${usedMB}MB/${totalMB}MB, RSS ${rssMB}MB`);
+
+  // Alert if memory usage is high (over 70% of heap for t2.micro)
+  if (usedMB > totalMB * 0.7) {
+    console.log(`⚠️ High memory usage: ${usedMB}MB/${totalMB}MB (${Math.round((usedMB/totalMB)*100)}%)`);
     
     // Force garbage collection if available
     if (global.gc) {
       global.gc();
       console.log('🧹 Forced garbage collection');
+      
+      // Check memory after GC
+      const afterGC = process.memoryUsage();
+      const afterUsedMB = Math.round(afterGC.heapUsed / 1024 / 1024);
+      console.log(`📊 Memory after GC: ${afterUsedMB}MB`);
     }
   }
 };
 
-// Monitor system every 30 seconds (reduced frequency for t2.micro)
-setInterval(monitorSystem, 30000);
+// Monitor system every 15 seconds for better tracking during uploads
+setInterval(monitorSystem, 15000);
+
+// Clean up temp files every hour
+setInterval(() => {
+  try {
+    cleanupTempFiles();
+  } catch (error) {
+    console.error('❌ Error during temp file cleanup:', error.message);
+  }
+}, 60 * 60 * 1000); // Every hour
 // Use Helmet for added security headers
 /* app.use(
   helmet({
