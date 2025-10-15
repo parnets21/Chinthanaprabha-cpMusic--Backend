@@ -25,52 +25,7 @@ router.get("/upload-test", (req, res) => {
   res.json({ message: "Upload endpoint is working", timestamp: new Date().toISOString() });
 });
 
-// File upload routes (for direct video and thumbnail uploads) with enhanced error handling
-router.post("/upload-video", upload.single("video"), async (req, res) => {
-  try {
-    console.log(`📹 Upload request received: ${req.file ? req.file.originalname : 'No file'}`);
-    console.log(`📹 Request body:`, req.body);
-    console.log(`📹 Upload ID from body:`, req.body.uploadId);
-    
-    if (!req.file) {
-      console.log(`❌ No file provided in request`);
-      return res.status(400).json({ message: "No video file provided" });
-    }
-
-    // Validate file type
-    if (!req.file.mimetype.startsWith('video/')) {
-      console.log(`❌ Invalid file type: ${req.file.mimetype}`);
-      return res.status(400).json({ message: "File must be a video" });
-    }
-
-    // Validate file size
-    if (req.file.size > 10 * 1024 * 1024 * 1024) {
-      console.log(`❌ File too large: ${req.file.size} bytes`);
-      return res.status(400).json({ message: "File size exceeds 10GB limit" });
-    }
-
-    console.log(`📹 Starting upload: ${req.file.originalname} (${Math.round(req.file.size / 1024 / 1024)}MB)`);
-
-    // Use frontend's upload ID from body or generate new one
-    const uploadId = req.body.uploadId || `upload_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    console.log(`📊 Using upload ID: ${uploadId}`);
-
-    const result = await uploadFile(req.file, "course-videos", {
-      uploadId,
-      timeout: 7200000, // 120 minutes (same as server)
-      metadata: {
-        fileName: req.file.originalname,
-        uploadTime: new Date().toISOString()
-      }
-    });
-
-    console.log(`✅ Upload completed: ${req.file.originalname}`);
-    res.status(200).json({ location: result.location });
-  } catch (error) {
-    console.error("Video upload error:", error);
-    res.status(500).json({ message: "Error uploading video", error: error.message });
-  }
-});
+// Note: Video upload routes are handled by uploadRoutes.js mounted at /chinthanaprabha/upload-video
 
 router.post("/upload-thumbnail", upload.single("thumbnail"), async (req, res) => {
   try {

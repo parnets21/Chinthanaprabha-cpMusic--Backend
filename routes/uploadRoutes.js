@@ -35,17 +35,33 @@ router.get("/health", (req, res) => {
 // Video upload endpoint (up to 10GB)
 router.post("/upload-video", upload.single("video"), async (req, res) => {
   try {
+    console.log(`📹 Upload request received: ${req.file ? req.file.originalname : 'No file'}`);
+    console.log(`📹 Request body:`, req.body);
+    console.log(`📹 Upload ID from body:`, req.body.uploadId);
+    
     if (!req.file) {
+      console.log(`❌ No file provided in request`);
       return res.status(400).json({ message: "No video file provided" });
     }
     if (!req.file.mimetype.startsWith("video/")) {
+      console.log(`❌ Invalid file type: ${req.file.mimetype}`);
       return res.status(400).json({ message: "File must be a video" });
     }
 
-    console.log(`📹 Uploading video: ${req.file.originalname}, Size: ${req.file.size} bytes`);
+    // Validate file size
+    if (req.file.size > 10 * 1024 * 1024 * 1024) {
+      console.log(`❌ File too large: ${req.file.size} bytes`);
+      return res.status(400).json({ message: "File size exceeds 10GB limit" });
+    }
+
+    console.log(`📹 Starting upload: ${req.file.originalname} (${Math.round(req.file.size / 1024 / 1024)}MB)`);
+
+    // Use frontend's upload ID from body or generate new one
+    const uploadId = req.body.uploadId || `upload_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    console.log(`📊 Using upload ID: ${uploadId}`);
 
     // Set response timeout for large files
-    res.setTimeout(600 * 1000); // 10 minutes
+    res.setTimeout(7200000); // 120 minutes (same as server)
 
     // Progress tracking callback
     const progressCallback = (progress) => {
@@ -63,18 +79,20 @@ router.post("/upload-video", upload.single("video"), async (req, res) => {
       },
       "course-videos",
       {
+        uploadId,
+        timeout: 7200000, // 120 minutes (same as server)
         progressCallback,
-        metadata: { type: "video", uploadTime: new Date().toISOString() },
+        metadata: { 
+          type: "video", 
+          uploadTime: new Date().toISOString(),
+          fileName: req.file.originalname,
+          uploadId: uploadId
+        },
       }
     );
 
-    res.status(200).json({
-      message: "Video uploaded successfully",
-      location: result.location,
-      fileName: req.file.originalname,
-      fileSize: req.file.size,
-      metadata: result.metadata,
-    });
+    console.log(`✅ Upload completed: ${req.file.originalname}`);
+    res.status(200).json({ location: result.location });
   } catch (error) {
     const errorResponse = mapErrorToResponse(error);
     res.status(errorResponse.status).json({
