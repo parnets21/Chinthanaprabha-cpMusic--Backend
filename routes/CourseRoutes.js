@@ -12,48 +12,59 @@ const upload = multer({
     fileSize: 10 * 1024 * 1024 * 1024, // 10GB limit for videos
     files: 10, // Max 10 files for lesson videos
     fieldSize: 1024, // Allow uploadId field
+    fieldNameSize: 100, // Allow longer field names
   },
 });
 
 // Health check
 router.get("/health", (req, res) => res.json({ message: "Course service running" }));
 
+// Test upload endpoint
+router.get("/upload-test", (req, res) => {
+  console.log("📹 Upload test endpoint hit");
+  res.json({ message: "Upload endpoint is working", timestamp: new Date().toISOString() });
+});
+
 // File upload routes (for direct video and thumbnail uploads) with enhanced error handling
-router.post("/upload-video", upload.fields([{ name: 'video', maxCount: 1 }, { name: 'uploadId', maxCount: 1 }]), async (req, res) => {
+router.post("/upload-video", upload.single("video"), async (req, res) => {
   try {
-    const videoFile = req.files?.video?.[0];
-    const uploadIdField = req.files?.uploadId?.[0];
+    console.log(`📹 Upload request received: ${req.file ? req.file.originalname : 'No file'}`);
+    console.log(`📹 Request body:`, req.body);
+    console.log(`📹 Upload ID from body:`, req.body.uploadId);
     
-    if (!videoFile) {
+    if (!req.file) {
+      console.log(`❌ No file provided in request`);
       return res.status(400).json({ message: "No video file provided" });
     }
 
     // Validate file type
-    if (!videoFile.mimetype.startsWith('video/')) {
+    if (!req.file.mimetype.startsWith('video/')) {
+      console.log(`❌ Invalid file type: ${req.file.mimetype}`);
       return res.status(400).json({ message: "File must be a video" });
     }
 
     // Validate file size
-    if (videoFile.size > 10 * 1024 * 1024 * 1024) {
+    if (req.file.size > 10 * 1024 * 1024 * 1024) {
+      console.log(`❌ File too large: ${req.file.size} bytes`);
       return res.status(400).json({ message: "File size exceeds 10GB limit" });
     }
 
-    console.log(`📹 Starting upload: ${videoFile.originalname} (${Math.round(videoFile.size / 1024 / 1024)}MB)`);
+    console.log(`📹 Starting upload: ${req.file.originalname} (${Math.round(req.file.size / 1024 / 1024)}MB)`);
 
-    // Use frontend's upload ID or generate new one
-    const uploadId = uploadIdField?.buffer?.toString() || `upload_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    // Use frontend's upload ID from body or generate new one
+    const uploadId = req.body.uploadId || `upload_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     console.log(`📊 Using upload ID: ${uploadId}`);
 
-    const result = await uploadFile(videoFile, "course-videos", {
+    const result = await uploadFile(req.file, "course-videos", {
       uploadId,
       timeout: 7200000, // 120 minutes (same as server)
       metadata: {
-        fileName: videoFile.originalname,
+        fileName: req.file.originalname,
         uploadTime: new Date().toISOString()
       }
     });
 
-    console.log(`✅ Upload completed: ${videoFile.originalname}`);
+    console.log(`✅ Upload completed: ${req.file.originalname}`);
     res.status(200).json({ location: result.location });
   } catch (error) {
     console.error("Video upload error:", error);
