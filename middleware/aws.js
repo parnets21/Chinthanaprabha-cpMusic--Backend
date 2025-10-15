@@ -25,7 +25,7 @@ const TEMP_DIR = path.join(__dirname, "..", "Uploads", "temp");
 
 // Enhanced upload function for files up to 10GB with real-time WebSocket progress
 const uploadFile = async (file, bucketname, options = {}) => {
-  const { progressCallback = null, metadata = {}, timeout = 600000, uploadId = null } = options;
+  const { progressCallback = null, metadata = {}, timeout = 7200000, uploadId = null } = options;
   const fileSize = file.size || 0;
   const key = `${bucketname}/${Date.now()}_${file.originalname}`;
   const actualUploadId = uploadId || `upload_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -102,6 +102,8 @@ const uploadFile = async (file, bucketname, options = {}) => {
         const elapsed = (Date.now() - startTime) / 1000;
         const speed = progress.loaded / Math.max(elapsed, 0.1) / 1024 / 1024;
         
+        console.log(`📈 AWS S3 Progress [${actualUploadId}]: ${percentage}% (${uploadedMB}/${totalMB}MB, ${speed.toFixed(2)}MB/s)`);
+        
         // Send real-time progress via WebSocket
         uploadProgressTracker.updateProgress(actualUploadId, progress.loaded, progress.total);
         
@@ -121,7 +123,10 @@ const uploadFile = async (file, bucketname, options = {}) => {
           progressCallback(progressData);
         }
         
-        console.log(`📈 AWS S3 Progress [${actualUploadId}]: ${percentage}% (${uploadedMB}/${totalMB}MB, ${speed.toFixed(2)}MB/s)`);
+        // Log progress every 5% for large files
+        if (percentage % 5 === 0) {
+          console.log(`📊 Upload Progress: ${percentage}% complete, ${speed.toFixed(2)}MB/s, ETA: ${Math.round((progress.total - progress.loaded) / (speed * 1024 * 1024))}s`);
+        }
       });
 
       // Set timeout for large uploads

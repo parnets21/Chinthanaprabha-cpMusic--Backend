@@ -11,6 +11,7 @@ const upload = multer({
   limits: {
     fileSize: 10 * 1024 * 1024 * 1024, // 10GB limit for videos
     files: 10, // Max 10 files for lesson videos
+    fieldSize: 1024, // Allow uploadId field
   },
 });
 
@@ -36,12 +37,13 @@ router.post("/upload-video", upload.single("video"), async (req, res) => {
 
     console.log(`📹 Starting upload: ${req.file.originalname} (${Math.round(req.file.size / 1024 / 1024)}MB)`);
 
-    // Generate unique upload ID for tracking
-    const uploadId = `upload_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    // Use frontend's upload ID or generate new one
+    const uploadId = req.body.uploadId || `upload_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    console.log(`📊 Using upload ID: ${uploadId}`);
 
     const result = await uploadFile(req.file, "course-videos", {
       uploadId,
-      timeout: 1800000, // 30 minutes
+      timeout: 7200000, // 120 minutes (same as server)
       metadata: {
         fileName: req.file.originalname,
         uploadTime: new Date().toISOString()

@@ -37,6 +37,12 @@ server.headersTimeout = 120 * 60 * 1000; // 120 minutes
 server.maxConnections = 1000; // Increase max connections
 server.maxHeadersCount = 2000; // Increase max headers
 
+// Prevent server from closing connections during long uploads
+server.on('connection', (socket) => {
+  socket.setTimeout(120 * 60 * 1000); // 120 minutes
+  socket.setKeepAlive(true, 30000); // Keep alive every 30 seconds
+});
+
 // Increase request timeout for large uploads
 app.use((req, res, next) => {
   if (req.url.includes('/upload-video') || req.url.includes('/upload')) {

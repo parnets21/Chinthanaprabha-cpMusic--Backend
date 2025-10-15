@@ -144,9 +144,14 @@ class UploadProgressTracker extends EventEmitter {
       ...uploadInfo
     });
 
+    console.log(`📡 Broadcasting progress for ${uploadId}: ${uploadInfo.percentage}%`);
+    console.log(`📡 Active clients: ${this.wss.clients.size}`);
+
     this.wss.clients.forEach((client) => {
+      console.log(`📡 Client uploadId: ${client.uploadId}, Target: ${uploadId}, Match: ${client.uploadId === uploadId}`);
       if (client.readyState === WebSocket.OPEN && 
           (client.uploadId === uploadId || !client.uploadId)) {
+        console.log(`📡 Sending progress to client: ${uploadId}`);
         client.send(message);
       }
     });
