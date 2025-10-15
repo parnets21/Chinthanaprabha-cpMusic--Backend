@@ -19,38 +19,41 @@ const upload = multer({
 router.get("/health", (req, res) => res.json({ message: "Course service running" }));
 
 // File upload routes (for direct video and thumbnail uploads) with enhanced error handling
-router.post("/upload-video", upload.single("video"), async (req, res) => {
+router.post("/upload-video", upload.fields([{ name: 'video', maxCount: 1 }, { name: 'uploadId', maxCount: 1 }]), async (req, res) => {
   try {
-    if (!req.file) {
+    const videoFile = req.files?.video?.[0];
+    const uploadIdField = req.files?.uploadId?.[0];
+    
+    if (!videoFile) {
       return res.status(400).json({ message: "No video file provided" });
     }
 
     // Validate file type
-    if (!req.file.mimetype.startsWith('video/')) {
+    if (!videoFile.mimetype.startsWith('video/')) {
       return res.status(400).json({ message: "File must be a video" });
     }
 
     // Validate file size
-    if (req.file.size > 10 * 1024 * 1024 * 1024) {
+    if (videoFile.size > 10 * 1024 * 1024 * 1024) {
       return res.status(400).json({ message: "File size exceeds 10GB limit" });
     }
 
-    console.log(`📹 Starting upload: ${req.file.originalname} (${Math.round(req.file.size / 1024 / 1024)}MB)`);
+    console.log(`📹 Starting upload: ${videoFile.originalname} (${Math.round(videoFile.size / 1024 / 1024)}MB)`);
 
     // Use frontend's upload ID or generate new one
-    const uploadId = req.body.uploadId || `upload_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const uploadId = uploadIdField?.buffer?.toString() || `upload_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     console.log(`📊 Using upload ID: ${uploadId}`);
 
-    const result = await uploadFile(req.file, "course-videos", {
+    const result = await uploadFile(videoFile, "course-videos", {
       uploadId,
       timeout: 7200000, // 120 minutes (same as server)
       metadata: {
-        fileName: req.file.originalname,
+        fileName: videoFile.originalname,
         uploadTime: new Date().toISOString()
       }
     });
 
-    console.log(`✅ Upload completed: ${req.file.originalname}`);
+    console.log(`✅ Upload completed: ${videoFile.originalname}`);
     res.status(200).json({ location: result.location });
   } catch (error) {
     console.error("Video upload error:", error);

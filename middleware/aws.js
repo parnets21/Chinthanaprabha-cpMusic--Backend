@@ -32,6 +32,7 @@ const uploadFile = async (file, bucketname, options = {}) => {
   
   console.log(`📤 Uploading: ${file.originalname} (${Math.round(fileSize / 1024 / 1024)}MB) - ID: ${actualUploadId}`);
   console.log(`📊 File details: Size=${fileSize} bytes, Type=${file.mimetype}, Buffer=${!!file.buffer}, Path=${file.path}`);
+  console.log(`📊 AWS Config: Bucket=${process.env.AWS_S3_BUCKET_NAME}, Region=${process.env.AWS_REGION}`);
 
   // Validate inputs
   if (!file || (!file.buffer && !file.path) || !file.originalname || !file.mimetype) {
@@ -167,6 +168,8 @@ const uploadFile = async (file, bucketname, options = {}) => {
     };
   } catch (error) {
     console.error(`❌ Upload failed [${actualUploadId}]: ${error.message}`);
+    console.error(`❌ Error details:`, error);
+    console.error(`❌ Stack trace:`, error.stack);
     
     // Fail upload tracking
     uploadProgressTracker.failUpload(actualUploadId, error);

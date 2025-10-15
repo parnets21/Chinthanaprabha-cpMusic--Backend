@@ -64,6 +64,7 @@ class UploadProgressTracker extends EventEmitter {
     this.activeUploads.set(uploadId, uploadInfo);
     console.log(`📊 Started tracking upload: ${fileName} (${Math.round(fileSize / 1024 / 1024)}MB) - ID: ${uploadId}`);
     console.log(`📊 Active uploads count: ${this.activeUploads.size}`);
+    console.log(`📊 WebSocket clients count: ${this.wss ? this.wss.clients.size : 0}`);
     
     // Send initial progress
     this.broadcastProgress(uploadId, uploadInfo);
