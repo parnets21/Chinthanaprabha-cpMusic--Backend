@@ -409,6 +409,50 @@ const abortMultipartUpload = async (bucket, key, uploadId) => {
   }
 };
 
+const uploadFile2 = (file, bucketname) => {
+  return new Promise((resolve, reject) => {
+    // Check for required environment variables
+    if (!process.env.AWS_S3_BUCKET_NAME || !process.env.AWS_REGION) {
+      console.error('AWS environment variables not set');
+      reject(new Error('AWS configuration missing. Please set AWS_S3_BUCKET_NAME, AWS_REGION, AWS_ACCESS_KEY_ID, and AWS_SECRET_ACCESS_KEY'));
+      return;
+    }
+
+    console.log('Uploading file with bucket:', process.env.AWS_S3_BUCKET_NAME);
+    
+    const params = {
+      Bucket: process.env.AWS_S3_BUCKET_NAME,
+      Key: `${bucketname}/${Date.now() + "_" + file.originalname}`,
+      Body: file.buffer,
+      ContentType: file.mimetype,
+      ContentDisposition: 'inline',
+      CacheControl: 'max-age=31536000', // Cache for 1 year
+      ACL: 'public-read', // Make the file publicly accessible
+    };
+    const command = new PutObjectCommand(params);
+
+
+    s3Client.send(command, (err, data) => {
+      if (err) {
+        console.error('S3 upload error:', err);
+        // Check if it's an authentication error
+        if (err.name === 'CredentialsProviderError' || err.message.includes('credentials')) {
+          console.log('AWS credentials not configured - using placeholder');
+          resolve('https://via.placeholder.com/300x200?text=AWS+Credentials+Required');
+        } else {
+          reject(`AWS upload failed: ${err.message}`);
+        }
+      } else {
+        // console.log(data);
+        let location = `https://${process.env.AWS_S3_BUCKET_NAME}.s3.amazonaws.com/${params.Key}`;
+        console.log('Upload successful:', location);
+        resolve(location);
+      }
+    });
+  });
+};
+
+
 module.exports = { 
   uploadFile, 
   deleteFile, 
@@ -416,5 +460,6 @@ module.exports = {
   generatePresignedUrl, 
   generateMultipartPresignedUrl, 
   completeMultipartUpload, 
-  abortMultipartUpload 
+  abortMultipartUpload,
+  uploadFile2
 };
