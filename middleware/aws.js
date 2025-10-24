@@ -427,7 +427,6 @@ const uploadFile2 = (file, bucketname) => {
       ContentType: file.mimetype,
       ContentDisposition: 'inline',
       CacheControl: 'max-age=31536000', // Cache for 1 year
-      ACL: 'public-read', // Make the file publicly accessible
     };
     const command = new PutObjectCommand(params);
 
